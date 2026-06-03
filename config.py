@@ -11,7 +11,7 @@ LLM_API_KEY = os.getenv("KIMI_API_KEY", "")
 LLM_BASE_URL = os.getenv("KIMI_BASE_URL", "https://api.moonshot.cn/v1")
 LLM_MODEL = os.getenv("KIMI_MODEL", "moonshot-v1-8k")
 LLM_MAX_TOKENS = 2048
-LLM_TEMPERATURE = 0.7
+LLM_TEMPERATURE = 1.0  # Kimi 模型要求 temperature 必须为 1
 
 # ── Memory 配置 ───────────────────────────────────────────
 CHROMA_PERSIST_DIR = os.getenv("CHROMA_PERSIST_DIR", "./chroma_data")

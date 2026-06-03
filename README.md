@@ -22,14 +22,34 @@ ReActAgent 旨在构建一个基于 ReAct（Reasoning + Acting）思路的智能
 
 ---
 
-## 目录结构 (Example)
+## 目录结构
 
 - `README.md` - 项目说明文档
-- `src/` - 代理实现代码
+- `agent/` - ReAct Agent 核心实现
+- `knowledge/` - 知识库管理
+  - `raw/` - 原始文档存放
+  - `parsed/` - 解析后的 Markdown
+  - `store.py` - 知识库存储层
+  - `processor.py` - 文档处理流水线
+  - `parsers/` - 多格式文档解析器
+  - `pipelines/` - 入库流水线
+- `memory/` - 记忆模块（短期+长期）
+- `tools/` - 工具注册中心
+- `utils/` - 工具函数
 - `docs/` - 设计文档与使用说明
-- `examples/` - 示例场景与应用演示
+  - `ChromaDB学习报告.md` - ChromaDB 存储结构详解
+  - `知识库导入指南.md` - 知识库导入使用指南
+- `main.py` - 项目入口
+- `quickstart.py` - 快速开始示例
+- `config.py` - 全局配置
+- `chroma_data/` - ChromaDB 持久化数据
 
-> 请根据仓库实际结构补充或调整目录说明。
+---
+
+## 文档
+
+- [知识库导入指南](docs/知识库导入指南.md) - 如何导入各种格式的文档到知识库
+- [ChromaDB学习报告](docs/ChromaDB学习报告.md) - ChromaDB 存储结构详解
 
 ---
 

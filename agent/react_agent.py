@@ -149,19 +149,47 @@ class ReActAgent:
         """从 LLM 回复中解析 Action 和 Action Input"""
         action = None
         action_input = None
+        in_action_input = False
+        action_input_lines = []
 
         lines = text.strip().split("\n")
-        for line in lines:
+        for i, line in enumerate(lines):
             line = line.strip()
             if line.startswith("**Action**:") or line.startswith("Action:"):
                 action = line.split(":", 1)[1].strip().strip("*")
             elif line.startswith("**Action Input**:") or line.startswith("Action Input:"):
-                raw = line.split(":", 1)[1].strip().strip("*")
+                in_action_input = True
+                # 提取冒号后面的部分
+                parts = line.split(":", 1)
+                if len(parts) > 1:
+                    action_input_lines.append(parts[1].strip())
+            elif in_action_input:
+                # 如果在 Action Input 块内，继续收集行
+                if line and not line.startswith("**") and not line.startswith("Thought:") and not line.startswith("Action:") and not line.startswith("Final Answer:"):
+                    action_input_lines.append(line)
+                else:
+                    in_action_input = False
+
+        if action_input_lines:
+            raw = "\n".join(action_input_lines).strip().strip("*")
+            if raw:
                 try:
                     action_input = json.loads(raw)
                 except json.JSONDecodeError:
-                    # 尝试简单包装
-                    action_input = {"input": raw}
+                    # 尝试移除可能的 markdown 代码块标记
+                    clean_raw = raw
+                    if clean_raw.startswith("```json"):
+                        clean_raw = clean_raw[7:]
+                    elif clean_raw.startswith("```"):
+                        clean_raw = clean_raw[3:]
+                    if clean_raw.endswith("```"):
+                        clean_raw = clean_raw[:-3]
+                    clean_raw = clean_raw.strip()
+                    try:
+                        action_input = json.loads(clean_raw)
+                    except json.JSONDecodeError:
+                        # 实在不行，作为纯文本，但不包装为 {input: ...}
+                        action_input = raw
 
         return action, action_input
 
@@ -173,12 +201,33 @@ class ReActAgent:
                 return line.split(":", 1)[1].strip().strip("*")
         return None
 
-    def _execute_tool(self, action: str, action_input: dict) -> str:
+    def _execute_tool(self, action: str, action_input) -> str:
         """执行工具调用"""
         tool = self.tools.get(action)
         if not tool:
             return f"错误: 未找到工具 '{action}'，可用工具: {[t.name for t in self.tools.all_tools()]}"
-        return tool.run(**action_input) if isinstance(action_input, dict) else tool.run()
+        
+        try:
+            if isinstance(action_input, dict):
+                # 字典参数，直接解包
+                return tool.run(**action_input)
+            elif isinstance(action_input, str) and action_input:
+                # 字符串参数，检查工具期望的参数名
+                # 获取工具的参数 schema
+                tool_schema = tool.parameters
+                required_params = tool_schema.get("required", [])
+                if required_params:
+                    # 如果有必填参数，使用第一个参数名
+                    param_name = required_params[0]
+                    return tool.run(**{param_name: action_input})
+                else:
+                    # 没有必填参数，直接调用
+                    return tool.run()
+            else:
+                # 其他情况，直接调用
+                return tool.run()
+        except Exception as e:
+            return f"[工具执行错误] {type(e).__name__}: {e}"
 
     def run(self, query: str, verbose: bool = True) -> str:
         """

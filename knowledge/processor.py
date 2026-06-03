@@ -1,3 +1,4 @@
+
 """
 Document Processor —— 文档处理流水线
 
@@ -7,9 +8,13 @@ Document Processor —— 文档处理流水线
 - Markdown (.md)
 - JSON (.json)  —— 预结构化文档
 - 纯文本 (.txt)
+- Word (.docx)
+- PowerPoint (.pptx)
+- PDF (.pdf)
+- Excel (.xlsx, .xls)
 
 处理流程：
-  原始文档 → 解析 → 清洗 → 分块 → 标签化 → 输出 KnowledgeChunk 列表
+  原始文档 → [解析器] → Markdown → 解析 → 清洗 → 分块 → 标签化 → 输出 KnowledgeChunk 列表
 """
 from __future__ import annotations
 
@@ -20,6 +25,9 @@ from pathlib import Path
 from typing import Optional
 
 from knowledge.store import KnowledgeChunk
+from knowledge.parsers import get_parser, get_supported_extensions
+
+
 
 
 # ─── Markdown 解析 ──────────────────────────────────────────
@@ -195,22 +203,44 @@ class DocumentProcessor:
         domain: Optional[str] = None,
         doc_type: Optional[str] = None,
         source: Optional[str] = None,
+        output_markdown: bool = False,
+        markdown_output_dir: Optional[str] = None,
     ) -> list[KnowledgeChunk]:
         """
         处理单个文件，返回 KnowledgeChunk 列表
+        
+        Args:
+            output_markdown: 是否输出 Markdown 文件
+            markdown_output_dir: Markdown 输出目录
         """
         path = Path(file_path)
         if not path.exists():
             raise FileNotFoundError(f"文件不存在: {file_path}")
-
-        text = path.read_text(encoding="utf-8")
+        
         doc_id = doc_id or path.stem
         domain = domain or self.default_domain
         doc_type = doc_type or self.default_doc_type
         source = source or str(path)
-
+        
         suffix = path.suffix.lower()
-
+        
+        # 检查是否有对应解析器
+        parser = get_parser(suffix)
+        if parser:
+            # 生成 Markdown 输出路径
+            md_output_path = None
+            if output_markdown:
+                md_dir = Path(markdown_output_dir) if markdown_output_dir else path.parent.parent / "parsed"
+                md_output_path = str(md_dir / f"{path.stem}.md")
+            
+            # 解析为 Markdown
+            markdown_text = parser.to_markdown(str(path), md_output_path)
+            
+            # 复用 Markdown 处理逻辑
+            return self._process_markdown(markdown_text, doc_id, domain, doc_type, source)
+        
+        # 原有逻辑保持不变
+        text = path.read_text(encoding="utf-8")
         if suffix == ".md":
             return self._process_markdown(text, doc_id, domain, doc_type, source)
         elif suffix == ".json":
@@ -292,6 +322,8 @@ class DocumentProcessor:
         dir_path: str,
         domain: Optional[str] = None,
         recursive: bool = True,
+        output_markdown: bool = False,
+        markdown_output_dir: Optional[str] = None,
     ) -> list[KnowledgeChunk]:
         """处理目录下所有文档"""
         path = Path(dir_path)
@@ -299,7 +331,8 @@ class DocumentProcessor:
             raise NotADirectoryError(f"不是目录: {dir_path}")
 
         all_chunks = []
-        extensions = {".md", ".json", ".txt"}
+        # 支持的扩展名：原有格式 + 新格式
+        extensions = {".md", ".json", ".txt"}.union(get_supported_extensions())
         glob_method = path.rglob if recursive else path.glob
         for file in glob_method("*"):
             if file.suffix.lower() in extensions:
@@ -307,6 +340,8 @@ class DocumentProcessor:
                     str(file),
                     domain=domain,
                     source=str(file),
+                    output_markdown=output_markdown,
+                    markdown_output_dir=markdown_output_dir,
                 )
                 all_chunks.extend(chunks)
                 print(f"  📄 {file.name} → {len(chunks)} 个知识片段")

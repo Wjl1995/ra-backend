@@ -28,6 +28,8 @@ def main():
     parser.add_argument("--max-iter", type=int, default=None, help="最大推理轮次")
     parser.add_argument("--ingest", metavar="DIR", help="入库指定目录下的文档")
     parser.add_argument("--ingest-domain", default="general", help="入库文档的领域标签")
+    parser.add_argument("--output-markdown", action="store_true", help="是否输出 Markdown 文件")
+    parser.add_argument("--markdown-output-dir", help="Markdown 输出目录")
     parser.add_argument("--stats", action="store_true", help="查看知识库统计")
     args = parser.parse_args()
 
@@ -47,7 +49,12 @@ def main():
 
     if args.ingest:
         from knowledge.pipelines import ingest_directory
-        ingest_directory(args.ingest, domain=args.ingest_domain)
+        ingest_directory(
+            args.ingest, 
+            domain=args.ingest_domain,
+            output_markdown=args.output_markdown,
+            markdown_output_dir=args.markdown_output_dir,
+        )
         return
 
     # ── Agent 对话 ──

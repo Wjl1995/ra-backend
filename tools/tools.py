@@ -263,6 +263,29 @@ TOOL_DEFINITIONS = {
         },
         func=lambda content, scenario="", outcome="", tags="": "经验库尚未初始化",
     ),
+    "write_markdown_file": Tool(
+        name="write_markdown_file",
+        description="创建并写入 Markdown 文件到本地文件系统。当用户需要保存内容为 .md 文件时使用。",
+        parameters={
+            "type": "object",
+            "properties": {
+                "file_path": {
+                    "type": "string",
+                    "description": "文件路径，如 'knowledge/raw/20260603/my_plan.md'",
+                },
+                "content": {
+                    "type": "string",
+                    "description": "文件内容，支持 Markdown 格式",
+                },
+                "title": {
+                    "type": "string",
+                    "description": "可选：文件标题，会添加到文件开头",
+                },
+            },
+            "required": ["file_path", "content"],
+        },
+        func=lambda file_path, content, title="": "文件写入功能尚未初始化",
+    ),
 }
 
 
@@ -370,6 +393,25 @@ class ToolRegistry:
         self._tools["lookup_rule"].func = lookup_rule
         self._tools["retrieve_case"].func = retrieve_case
         self._tools["save_experience"].func = save_experience
+
+        def write_markdown_file(file_path: str, content: str, title: str = "") -> str:
+            from pathlib import Path
+            try:
+                path = Path(file_path)
+                # 确保目录存在
+                path.parent.mkdir(parents=True, exist_ok=True)
+                # 构建内容
+                full_content = ""
+                if title:
+                    full_content += f"# {title}\n\n"
+                full_content += content
+                # 写入文件
+                path.write_text(full_content, encoding="utf-8")
+                return f"✅ 已成功创建文件: {file_path}"
+            except Exception as e:
+                return f"❌ 文件写入失败: {type(e).__name__}: {e}"
+
+        self._tools["write_markdown_file"].func = write_markdown_file
 
     @classmethod
     def create_default(cls, memory=None, knowledge_store=None) -> "ToolRegistry":

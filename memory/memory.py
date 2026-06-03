@@ -184,12 +184,31 @@ class AgentMemory:
     def __init__(self):
         self.short_term = ShortTermMemory()
         self.long_term = LongTermMemory()
+        self._pending_user_message: Optional[str] = None  # 暂存用户消息，等待助手回复
 
     def add_user_message(self, content: str) -> None:
         self.short_term.add("user", content)
+        # 暂存用户消息，等待助手回复后合并存储
+        self._pending_user_message = content
 
     def add_assistant_message(self, content: str) -> None:
         self.short_term.add("assistant", content)
+        # 如果有待处理的用户消息，合并存储到长期记忆
+        if self._pending_user_message:
+            user_summary = self._simple_summarize(self._pending_user_message, max_length=100)
+            assistant_summary = self._simple_summarize(content, max_length=150)
+            combined_text = f"用户: {user_summary}\n助手: {assistant_summary}"
+            self.long_term.add(combined_text, {"type": "conversation_round"})
+            self._pending_user_message = None  # 清空暂存
+
+    def _simple_summarize(self, text: str, max_length: int = 100) -> str:
+        """简单摘要：截取开头+结尾，中间用省略号"""
+        if len(text) <= max_length:
+            return text
+        # 取前面 2/3，后面 1/3
+        part1_len = int(max_length * 0.7)
+        part2_len = max_length - part1_len - 3  # 3 是省略号
+        return text[:part1_len] + "..." + text[-part2_len:] if part2_len > 0 else text[:max_length] + "..."
 
     def save_to_long_term(self, text: str, metadata: Optional[dict] = None) -> str:
         """主动保存重要信息到长期记忆"""

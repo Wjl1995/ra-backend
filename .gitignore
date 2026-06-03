@@ -47,3 +47,5 @@ Thumbs.db
 
 # Raw data (optional, uncomment if you don't want to upload raw docs)
 knowledge/raw/
+
+test/

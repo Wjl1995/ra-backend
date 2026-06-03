@@ -34,7 +34,9 @@ def print_all_memories(ltm):
         meta = all_data['metadatas'][idx]
         tag = meta.get('tag', 'N/A')
         timestamp = meta.get('timestamp', 'N/A')
-        table.add_row(doc_id[:8] + "...", text, tag, timestamp[:19] if timestamp else 'N/A')
+        # 显示完整ID，文本截断到200字符
+        display_text = text[:200] + "..." if len(text) > 200 else text
+        table.add_row(doc_id, display_text, tag, timestamp[:19] if timestamp else 'N/A')
     
     console.print(table)
 
@@ -90,6 +92,28 @@ def clear_all_memories(ltm):
         console.print("[yellow]已取消[/yellow]")
 
 
+def delete_by_type(ltm, msg_type):
+    """按类型删除记忆：user_message 或 assistant_message"""
+    all_data = ltm.collection.get()
+    ids_to_delete = []
+    
+    for idx, doc_id in enumerate(all_data['ids']):
+        meta = all_data['metadatas'][idx]
+        if meta.get('type') == msg_type:
+            ids_to_delete.append(doc_id)
+    
+    if not ids_to_delete:
+        console.print(f"[yellow]没有找到类型为 '{msg_type}' 的记忆[/yellow]")
+        return
+    
+    confirm = console.input(f"[red]确定要删除 {len(ids_to_delete)} 条类型为 '{msg_type}' 的记忆吗？输入 YES 确认: [/red]")
+    if confirm == "YES":
+        ltm.collection.delete(ids=ids_to_delete)
+        console.print(f"[green]✅ 已删除 {len(ids_to_delete)} 条记忆[/green]")
+    else:
+        console.print("[yellow]已取消[/yellow]")
+
+
 def show_stats(ltm):
     """显示统计信息"""
     count = ltm.count()
@@ -109,6 +133,7 @@ def print_help():
   search <query>          搜索相关记忆
   add <content> [tag]     添加新记忆
   delete <id>             删除指定ID的记忆
+  delete-type <type>      按类型删除：user_message 或 assistant_message
   clear                   清空所有记忆
   stats                   显示统计信息
   help                    显示帮助
@@ -153,6 +178,11 @@ def main():
             console.print("[red]请输入记忆ID[/red]")
             return
         delete_memory(ltm, sys.argv[2])
+    elif cmd == "delete-type":
+        if len(sys.argv) < 3:
+            console.print("[red]请输入类型：user_message 或 assistant_message[/red]")
+            return
+        delete_by_type(ltm, sys.argv[2])
     elif cmd == "clear":
         clear_all_memories(ltm)
     elif cmd == "stats":

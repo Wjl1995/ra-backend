@@ -26,12 +26,20 @@ def ingest_file(
     doc_type: str = "knowledge",
     store: KnowledgeStore = None,
     processor: DocumentProcessor = None,
+    output_markdown: bool = False,
+    markdown_output_dir: str = None,
 ) -> int:
     """处理单个文件并入库，返回入库片段数"""
     store = store or KnowledgeStore()
     processor = processor or DocumentProcessor()
 
-    chunks = processor.process_file(file_path, domain=domain, doc_type=doc_type)
+    chunks = processor.process_file(
+        file_path, 
+        domain=domain, 
+        doc_type=doc_type,
+        output_markdown=output_markdown,
+        markdown_output_dir=markdown_output_dir,
+    )
     ids = store.add_chunks(chunks)
     print(f"✅ {file_path} → 入库 {len(ids)} 个知识片段")
     return len(ids)
@@ -42,13 +50,20 @@ def ingest_directory(
     domain: str = "general",
     store: KnowledgeStore = None,
     processor: DocumentProcessor = None,
+    output_markdown: bool = False,
+    markdown_output_dir: str = None,
 ) -> int:
     """处理整个目录并入库，返回总入库片段数"""
     store = store or KnowledgeStore()
     processor = processor or DocumentProcessor()
 
     print(f"📂 扫描目录: {dir_path}")
-    chunks = processor.process_directory(dir_path, domain=domain)
+    chunks = processor.process_directory(
+        dir_path, 
+        domain=domain,
+        output_markdown=output_markdown,
+        markdown_output_dir=markdown_output_dir,
+    )
 
     if not chunks:
         print("⚠️ 未找到可处理的文档")
@@ -81,12 +96,25 @@ if __name__ == "__main__":
     group.add_argument("--stats", action="store_true", help="查看知识库统计")
     parser.add_argument("--domain", default="general", help="领域标签")
     parser.add_argument("--doc-type", default="knowledge", help="文档类型 (knowledge/rule/case)")
+    parser.add_argument("--output-markdown", action="store_true", help="是否输出 Markdown 文件")
+    parser.add_argument("--markdown-output-dir", help="Markdown 输出目录")
 
     args = parser.parse_args()
 
     if args.stats:
         show_stats()
     elif args.file:
-        ingest_file(args.file, domain=args.domain, doc_type=args.doc_type)
+        ingest_file(
+            args.file, 
+            domain=args.domain, 
+            doc_type=args.doc_type,
+            output_markdown=args.output_markdown,
+            markdown_output_dir=args.markdown_output_dir,
+        )
     elif args.dir:
-        ingest_directory(args.dir, domain=args.domain)
+        ingest_directory(
+            args.dir, 
+            domain=args.domain,
+            output_markdown=args.output_markdown,
+            markdown_output_dir=args.markdown_output_dir,
+        )
