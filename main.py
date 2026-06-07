@@ -37,7 +37,7 @@ def main():
     if args.stats:
         store = KnowledgeStore()
         stats = store.stats()
-        print("\n📊 知识库统计:")
+        print("\n[知识库统计]")
         total = 0
         for name, info in stats.items():
             count = info["count"]

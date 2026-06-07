@@ -344,6 +344,6 @@ class DocumentProcessor:
                     markdown_output_dir=markdown_output_dir,
                 )
                 all_chunks.extend(chunks)
-                print(f"  📄 {file.name} → {len(chunks)} 个知识片段")
+                print(f"  [OK] {file.name} -> {len(chunks)} 个知识片段")
 
         return all_chunks

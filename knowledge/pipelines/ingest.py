@@ -34,14 +34,14 @@ def ingest_file(
     processor = processor or DocumentProcessor()
 
     chunks = processor.process_file(
-        file_path, 
-        domain=domain, 
+        file_path,
+        domain=domain,
         doc_type=doc_type,
         output_markdown=output_markdown,
         markdown_output_dir=markdown_output_dir,
     )
     ids = store.add_chunks(chunks)
-    print(f"✅ {file_path} → 入库 {len(ids)} 个知识片段")
+    print(f"[OK] {file_path} -> 入库 {len(ids)} 个知识片段")
     return len(ids)
 
 
@@ -57,20 +57,20 @@ def ingest_directory(
     store = store or KnowledgeStore()
     processor = processor or DocumentProcessor()
 
-    print(f"📂 扫描目录: {dir_path}")
+    print(f"[扫描目录] {dir_path}")
     chunks = processor.process_directory(
-        dir_path, 
+        dir_path,
         domain=domain,
         output_markdown=output_markdown,
         markdown_output_dir=markdown_output_dir,
     )
 
     if not chunks:
-        print("⚠️ 未找到可处理的文档")
+        print("[警告] 未找到可处理的文档")
         return 0
 
     ids = store.add_chunks(chunks)
-    print(f"\n✅ 共入库 {len(ids)} 个知识片段")
+    print(f"\n[完成] 共入库 {len(ids)} 个知识片段")
     return len(ids)
 
 
@@ -78,7 +78,7 @@ def show_stats(store: KnowledgeStore = None):
     """显示知识库统计"""
     store = store or KnowledgeStore()
     stats = store.stats()
-    print("\n📊 知识库统计:")
+    print("\n[知识库统计]")
     total = 0
     for name, info in stats.items():
         count = info["count"]
