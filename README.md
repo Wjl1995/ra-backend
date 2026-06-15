@@ -167,6 +167,27 @@ Use this repository as a foundation for building and evaluating ReAct-based agen
 3. Implement short-term and long-term memory storage
 4. Test on tasks requiring reasoning and memory
 
+## Online Backend Scaffold
+
+The repository now also contains a FastAPI backend scaffold under `apps/backend/`.
+
+Run locally after installing the new dependencies:
+
+```bash
+uvicorn apps.backend.main:app --reload
+```
+
+Current scaffold coverage:
+
+- `/api/v1/auth/wx-login`
+- `/api/v1/me/profile`
+- `/api/v1/chat/sessions`
+- `/api/v1/documents`
+- `/api/v1/search`
+- `/api/v1/suggestions`
+
+This is a skeleton only. WeChat real login, SQLAdmin integration, async job execution, and retrieval-backed chat answers still need implementation.
+
 ## Contributing
 
 Contributions are welcome:

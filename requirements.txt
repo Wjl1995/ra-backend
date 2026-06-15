@@ -3,6 +3,11 @@ chromadb
 pydantic
 python-dotenv
 rich
+fastapi
+uvicorn[standard]
+sqlalchemy
+python-jose[cryptography]
+python-multipart
 python-docx>=1.1.0
 python-pptx>=0.6.23
 pdfplumber>=0.10.0
