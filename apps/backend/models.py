@@ -52,6 +52,7 @@ class Document(Base):
     __tablename__ = "documents"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True, nullable=True)
     title: Mapped[str] = mapped_column(String(255))
     domain: Mapped[str] = mapped_column(String(64), default="general")
     tags_json: Mapped[str] = mapped_column(Text, default="[]")
@@ -62,6 +63,7 @@ class Document(Base):
     source_path: Mapped[str] = mapped_column(String(255), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
+    user: Mapped[User | None] = relationship()
     chunks: Mapped[list["DocumentChunk"]] = relationship(back_populates="document")
 
 

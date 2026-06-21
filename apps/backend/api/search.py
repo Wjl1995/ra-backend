@@ -19,4 +19,11 @@ def search(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    return search_service.search_documents(db, query=q, top_k=top_k, domain=domain, published_only=False)
+    return search_service.search_documents(
+        db,
+        current_user,
+        query=q,
+        top_k=top_k,
+        domain=domain,
+        published_only=False,
+    )

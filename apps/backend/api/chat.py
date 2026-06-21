@@ -59,10 +59,12 @@ def send_message(
 
     try:
         chat_service.create_user_message(db, session_id, current_user, payload.content)
-        answer, refs = chat_service.build_stubbed_answer(payload.content, payload.document_id)
+        answer, refs = chat_service.build_kimi_answer(db, session_id, current_user, payload.document_id)
         return chat_service.create_assistant_message(db, session_id, current_user, answer, refs)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
 
 
 @router.get("/thinking/{thinking_id}", response_model=ThinkingResponse)
