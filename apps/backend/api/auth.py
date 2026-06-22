@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from apps.backend.auth import create_access_token, mock_openid_from_code
+from apps.backend.auth import WeChatLoginError, create_access_token, resolve_openid_from_code
 from apps.backend.config import settings
 from apps.backend.dependencies import get_db
 from apps.backend.models import User
@@ -14,7 +14,11 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 @router.post("/wx-login", response_model=LoginResponse)
 def wx_login(payload: LoginRequest, db: Session = Depends(get_db)):
-    openid = mock_openid_from_code(payload.code)
+    try:
+        openid = resolve_openid_from_code(payload.code)
+    except WeChatLoginError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+
     user = db.query(User).filter(User.openid == openid).first()
     if user is None:
         user = User(openid=openid, daily_quota=settings.daily_quota)

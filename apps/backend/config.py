@@ -11,6 +11,10 @@ class Settings:
     database_url: str = os.getenv("DATABASE_URL", "sqlite:///./data/db.sqlite3")
     jwt_secret: str = os.getenv("JWT_SECRET", "change-me")
     jwt_algorithm: str = "HS256"
+    wechat_login_mode: str = os.getenv("WECHAT_LOGIN_MODE", "mock").lower()
+    wechat_app_id: str = os.getenv("WECHAT_APP_ID", "")
+    wechat_app_secret: str = os.getenv("WECHAT_APP_SECRET", "")
+    wechat_api_timeout_seconds: float = float(os.getenv("WECHAT_API_TIMEOUT_SECONDS", "10"))
     daily_quota: int = int(os.getenv("DAILY_QUOTA", "50"))
     upload_dir: str = os.getenv("UPLOAD_DIR", "./data/uploads")
     kimi_api_key: str = os.getenv("KIMI_API_KEY", "")

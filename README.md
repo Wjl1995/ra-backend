@@ -74,6 +74,7 @@ cp .env.example .env
 
 - `KIMI_API_KEY`
 - `JWT_SECRET`
+- `WECHAT_LOGIN_MODE=wechat`
 - `WECHAT_APP_ID`
 - `WECHAT_APP_SECRET`
 
@@ -97,4 +98,6 @@ docker compose logs -f caddy
 
 - `docker-compose.yml` binds the app service to `127.0.0.1:8000` and expects Caddy to terminate public HTTP/HTTPS traffic.
 - Persistent data is stored in `./data/`.
-- The current auth flow still uses a mock `openid` derivation from the login code. Real WeChat `code2session` integration is still pending.
+- The backend supports two auth modes:
+  - `WECHAT_LOGIN_MODE=mock` for local/service smoke tests
+  - `WECHAT_LOGIN_MODE=wechat` for real mini program `wx.login -> code2session -> openid -> JWT`
