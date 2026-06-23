@@ -155,6 +155,79 @@ flowchart LR
     H --> K["Safe Utility Layer"]
 ```
 
+## 4.3 部署拓扑
+
+### 4.3.1 开发环境拓扑
+
+开发环境建议先采用“同机不同进程”：
+
+```mermaid
+flowchart TB
+    A["Developer Machine"] --> B["FastAPI App"]
+    B --> C["AgentOrchestrator"]
+    C --> D["MCP Client Manager"]
+    D --> E["memory-mcp-server (stdio child process)"]
+    D --> F["knowledge-mcp-server (stdio child process)"]
+    D --> G["utility-mcp-server (stdio child process)"]
+    B --> H["SQLite / local data"]
+    F --> I["KnowledgeStore / local uploads"]
+    E --> J["Memory store / Chroma"]
+```
+
+特点：
+
+1. 所有代码仍在一个仓库中开发。
+2. 主服务通过 `stdio` 拉起 MCP Server 子进程。
+3. 适合本地调试、断点、MCP Inspector 验证。
+4. 部署复杂度低，但不适合作为长期线上形态。
+
+### 4.3.2 生产环境拓扑
+
+生产环境建议采用“同仓库、多容器、多服务”：
+
+```mermaid
+flowchart TB
+    U["WeChat Miniapp User"] --> C["Caddy / HTTPS Gateway"]
+    C --> A["app: FastAPI Backend"]
+    A --> B["AgentOrchestrator"]
+    B --> D["MCP Client Manager"]
+    D --> E["mcp-memory (HTTP)"]
+    D --> F["mcp-knowledge (HTTP)"]
+    D --> G["mcp-utility (HTTP)"]
+    A --> H["SQLite / App DB"]
+    E --> I["Chroma / Memory Data"]
+    F --> J["Knowledge Store / Uploads"]
+    A --> K["LLM Provider (Kimi/OpenAI-compatible)"]
+```
+
+对应 Docker Compose 角色：
+
+1. `app`
+   - 业务 API
+   - Agent Runtime
+   - MCP Client Manager
+
+2. `mcp-memory`
+   - 记忆类 tools/resources
+
+3. `mcp-knowledge`
+   - 知识检索 / 文档上下文 / 规则 / 案例类 tools/resources
+
+4. `mcp-utility`
+   - 低风险通用工具
+
+5. `caddy`
+   - 统一 HTTPS 入口
+
+### 4.3.3 为什么推荐生产环境拆服务
+
+原因：
+
+1. 主服务和工具服务职责边界更清晰。
+2. 工具服务可独立扩容、重启、观测。
+3. 某个 MCP Server 异常时，不必直接拖垮主 API 服务。
+4. 更适合接入健康检查、限流和日志采集。
+
 ## 4.3 设计原则
 
 1. **后端做唯一宿主**
@@ -170,6 +243,67 @@ flowchart LR
 4. **生产优先 HTTP，开发可用 STDIO**
    - 开发调试时用 stdio 简单。
    - 线上部署用 HTTP 更可观测、可伸缩。
+
+## 4.4 请求时序图
+
+下面这张图描述的是一次“用户在小程序里提问，主 Agent 通过 MCP 调知识工具，再返回答案”的标准时序。
+
+```mermaid
+sequenceDiagram
+    participant U as Miniapp User
+    participant M as Miniapp
+    participant A as FastAPI Backend
+    participant O as AgentOrchestrator
+    participant L as LLM
+    participant C as MCP Client Manager
+    participant K as knowledge-mcp-server
+    participant DB as Knowledge/Data Store
+
+    U->>M: 输入问题并发送
+    M->>A: POST /api/v1/chat/sessions/{id}/messages
+    A->>A: JWT鉴权，解析 user_id / session_id / document_id
+    A->>O: run_chat_turn(...)
+    O->>C: list_tools(context)
+    C->>K: tools/list
+    K-->>C: 可用知识工具列表
+    C-->>O: tools metadata
+    O->>L: 发送 system prompt + history + tools schema
+    L-->>O: 请求调用 search_document_chunks
+    O->>C: call_tool(knowledge, search_document_chunks, args, context)
+    C->>K: tools/call
+    K->>DB: 检索当前用户可访问的文档/片段
+    DB-->>K: 检索结果
+    K-->>C: tool result
+    C-->>O: 结构化工具返回
+    O->>L: 继续推理（附带 tool result）
+    L-->>O: 最终答案
+    O-->>A: answer + refs + tool_traces
+    A->>A: 持久化 assistant message / refs / traces
+    A-->>M: 200 {content, refs, ...}
+    M-->>U: 渲染回答与引用卡片
+```
+
+### 4.4.1 时序图里的关键点
+
+1. 小程序永远只请求你自己的后端 API，不直接访问 MCP Server。
+2. `user_id/session_id/document_id` 由后端传给 MCP 工具，不依赖模型自己描述。
+3. 模型只负责“决定是否调用工具、如何组合回答”。
+4. 工具真实执行由 MCP Server 完成。
+5. 工具返回结果和最终 answer 都应进入持久化和审计链路。
+
+### 4.4.2 文档问答场景的特殊时序
+
+如果用户是从“Ask with this document”进入聊天，则主服务还应在运行时上下文里增加：
+
+1. `document_id`
+2. `document_owner_user_id`
+3. `document_scope=single`
+
+这意味着：
+
+1. `knowledge-mcp-server` 在执行 `search_document_chunks` 时必须只检索该文档。
+2. 如果文档不属于当前用户，应直接返回权限错误，而不是交给模型继续推理。
+3. 这样才能延续你当前已经实现的“每个用户只看自己上传文件”的隔离能力。
 
 ---
 
