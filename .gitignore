@@ -8,6 +8,10 @@ env/
 venv/
 .venv/
 .venv-*/
+.dev-env/
+.conda-env/
+.conda-env2/
+.conda-pkgs/
 ENV/
 build/
 develop-eggs/
