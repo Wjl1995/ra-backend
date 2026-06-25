@@ -6,16 +6,16 @@ from datetime import datetime
 from openai import OpenAI
 from sqlalchemy.orm import Session
 
+from apps.backend.agent_runtime import AgentOrchestrator, AgentRuntimePolicy, AgentTurnRequest, LocalToolProvider, MCPToolProvider
 from apps.backend.config import settings
 from apps.backend.models import ChatSession, Message, User
+from apps.backend.mcp import MCPClientManager, build_default_stdio_registry, load_registry_from_json
 from apps.backend.schemas import MessageSchema, RefSchema, SessionSchema
 from apps.backend.services import search_service
+from knowledge import KnowledgeStore
+from memory import AgentMemory
+from tools import ToolRegistry
 
-SYSTEM_PROMPT = (
-    "You are ReActAgent, a helpful assistant for a WeChat mini app. "
-    "Answer clearly and concisely in Chinese unless the user asks for another language. "
-    "If document context is provided, prioritize it and say when information is uncertain."
-)
 SUMMARY_HINT_KEYWORDS = (
     "总结",
     "概括",
@@ -33,6 +33,7 @@ SUMMARY_HINT_KEYWORDS = (
 )
 
 _client: OpenAI | None = None
+_orchestrator: AgentOrchestrator | None = None
 
 
 def list_sessions(db: Session, user: User) -> list[SessionSchema]:
@@ -117,28 +118,33 @@ def create_assistant_message(
     )
 
 
-def build_kimi_answer(db: Session, session_id: int, user: User, document_id: int | None = None) -> tuple[str, list[dict]]:
+def build_kimi_answer(
+    db: Session,
+    session_id: int,
+    user: User,
+    document_id: int | None = None,
+) -> tuple[str, list[dict]]:
     _get_session(db, session_id, user)
     if not settings.kimi_api_key:
         raise RuntimeError("Kimi API key is not configured")
-
+    query = _get_latest_user_query(db, session_id)
     refs = _build_retrieval_refs(db, session_id, user, document_id)
-    messages = _build_kimi_messages(db, session_id, refs)
-
-    try:
-        response = _get_client().chat.completions.create(
-            model=settings.kimi_model,
-            messages=messages,
-            temperature=1.0,
-            max_tokens=settings.kimi_max_tokens,
-        )
-    except Exception as exc:  # noqa: BLE001
-        raise RuntimeError(f"Kimi request failed: {exc}") from exc
-
-    answer = _extract_text(response)
-    if not answer:
-        raise RuntimeError("Kimi returned an empty response")
-    return answer, refs
+    history = _build_history_messages(db, session_id)
+    request = AgentTurnRequest(
+        user_id=user.id,
+        session_id=session_id,
+        query=query,
+        document_id=document_id,
+        context={
+            "history_messages": history,
+            "initial_refs": refs,
+            "document_scope": "single" if document_id is not None else "user",
+            "role_scope": "user",
+        },
+    )
+    response = _get_orchestrator().run_chat_turn(request)
+    final_refs = response.refs or refs
+    return response.answer, final_refs
 
 
 def _get_session(db: Session, session_id: int, user: User) -> ChatSession:
@@ -163,12 +169,37 @@ def _get_client() -> OpenAI:
     return _client
 
 
-def _build_kimi_messages(db: Session, session_id: int, refs: list[dict]) -> list[dict[str, str]]:
-    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
-    document_context = _build_document_context(refs)
-    if document_context:
-        messages.append({"role": "system", "content": document_context})
+def _get_orchestrator() -> AgentOrchestrator:
+    global _orchestrator
+    if _orchestrator is not None:
+        return _orchestrator
 
+    if settings.agent_tool_mode == "mcp":
+        registry = (
+            load_registry_from_json(settings.mcp_server_config_json)
+            if settings.mcp_server_config_json
+            else build_default_stdio_registry()
+        )
+        tool_provider = MCPToolProvider(MCPClientManager(registry))
+    else:
+        local_registry = ToolRegistry.create_default(
+            memory=AgentMemory(),
+            knowledge_store=KnowledgeStore(),
+        )
+        tool_provider = LocalToolProvider(local_registry)
+
+    _orchestrator = AgentOrchestrator(
+        tool_provider=tool_provider,
+        llm_client=_get_client(),
+        model=settings.kimi_model,
+        max_tokens=settings.kimi_max_tokens,
+        temperature=1.0,
+        policy=AgentRuntimePolicy(max_tool_calls=settings.agent_max_tool_calls),
+    )
+    return _orchestrator
+
+
+def _build_history_messages(db: Session, session_id: int) -> list[dict[str, str]]:
     history = (
         db.query(Message)
         .filter(Message.session_id == session_id)
@@ -178,27 +209,12 @@ def _build_kimi_messages(db: Session, session_id: int, refs: list[dict]) -> list
     if settings.kimi_max_context_messages > 0:
         history = history[-settings.kimi_max_context_messages :]
 
+    messages: list[dict[str, str]] = []
     for item in history:
         if item.role not in {"user", "assistant"}:
             continue
         messages.append({"role": item.role, "content": item.content})
     return messages
-
-
-def _build_document_context(refs: list[dict]) -> str:
-    if not refs:
-        return ""
-    lines = [
-        "Use the following retrieved knowledge snippets when they are relevant.",
-        "Prefer these snippets over guesswork, and mention uncertainty when the snippets are incomplete.",
-    ]
-    for index, ref in enumerate(refs, start=1):
-        lines.append(
-            f"[Snippet {index}] Document {ref['document_id']} - {ref['title']}\n{ref['snippet']}"
-        )
-    return "\n\n".join(lines)
-
-
 def _build_retrieval_refs(
     db: Session,
     session_id: int,
@@ -265,20 +281,3 @@ def _is_summary_request(query: str) -> bool:
     if not normalized:
         return False
     return any(keyword in normalized for keyword in SUMMARY_HINT_KEYWORDS)
-
-
-def _extract_text(response) -> str:
-    try:
-        content = response.choices[0].message.content
-    except (AttributeError, IndexError) as exc:
-        raise RuntimeError("Unexpected response format from Kimi") from exc
-
-    if isinstance(content, str):
-        return content.strip()
-    if isinstance(content, list):
-        parts = []
-        for item in content:
-            if isinstance(item, dict) and item.get("type") == "text":
-                parts.append(item.get("text", ""))
-        return "".join(parts).strip()
-    return str(content).strip()

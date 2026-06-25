@@ -142,3 +142,18 @@ Behavior notes:
 - `MCP_SERVER_CONFIG_JSON` can override the default stdio server registry if you need custom commands or timeouts.
 - Full Phase 2 MCP mode assumes the repo dependencies are installed, including packages needed by `memory` / `knowledge` / `openai`.
 - For full aggregate verification, run `python scripts/verify_mcp_aggregate.py`.
+
+## MCP Phase 3
+
+The online chat path now runs on the shared agent runtime:
+
+```bash
+set AGENT_TOOL_MODE=mcp
+python scripts/verify_phase3_chat_runtime.py
+```
+
+Behavior notes:
+
+- `chat_service` now routes through `AgentOrchestrator` by default.
+- The backend passes `user_id`, `session_id`, and `document_id` into MCP tool calls to preserve user-level document isolation.
+- `AGENT_TOOL_MODE=mcp` is the recommended online setting so the chat path uses the MCP servers instead of the local in-process registry.

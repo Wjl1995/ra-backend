@@ -12,6 +12,7 @@ venv/
 .conda-env/
 .conda-env2/
 .conda-pkgs/
+phase3-chat-*/
 ENV/
 build/
 develop-eggs/

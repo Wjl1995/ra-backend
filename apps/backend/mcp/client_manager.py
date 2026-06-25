@@ -113,7 +113,6 @@ class MCPClientManager:
         arguments: dict[str, Any],
         context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        del context
         await self._ensure_started()
         server_name = server or self._resolve_tool_server(tool)
         payload = self._request(
@@ -122,6 +121,7 @@ class MCPClientManager:
             {
                 "name": tool,
                 "arguments": arguments or {},
+                "context": context or {},
             },
         )
         return self._normalize_tool_call_result(server_name, tool, payload)
@@ -132,10 +132,9 @@ class MCPClientManager:
         uri: str,
         context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        del context
         await self._ensure_started()
         server_name = server or self._resolve_resource_server(uri)
-        payload = self._request(server_name, "resources/read", {"uri": uri})
+        payload = self._request(server_name, "resources/read", {"uri": uri, "context": context or {}})
         return self._normalize_resource_read_result(server_name, uri, payload)
 
     async def get_prompt(
@@ -145,7 +144,6 @@ class MCPClientManager:
         arguments: dict[str, Any] | None = None,
         context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        del context
         await self._ensure_started()
         server_name = server or self._resolve_prompt_server(name)
         payload = self._request(
@@ -154,6 +152,7 @@ class MCPClientManager:
             {
                 "name": name,
                 "arguments": arguments or {},
+                "context": context or {},
             },
         )
         return self._normalize_prompt_result(server_name, name, payload)
@@ -539,6 +538,10 @@ class MCPClientManager:
             "is_error": bool(payload.get("isError", False)),
             "metadata": {
                 "content_blocks": content_blocks,
+                "structured_content": payload.get("structuredContent"),
+                "refs": payload.get("refs", []),
+                "resource_refs": payload.get("resourceRefs", []),
+                "extra": payload.get("metadata", {}),
             },
         }
 

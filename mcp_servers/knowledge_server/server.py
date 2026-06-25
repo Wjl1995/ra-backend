@@ -1,14 +1,24 @@
 from __future__ import annotations
 
-import json
+from sqlalchemy.orm import Session
 
+from apps.backend.database import SessionLocal
+from apps.backend.models import Document, User
+from apps.backend.services import document_service, search_service
 from knowledge.store import KnowledgeChunk, KnowledgeStore
-from mcp_servers.shared import MCPPrompt, MCPResource, MCPTool, SimpleMCPServer
+from mcp_servers.shared import (
+    MCPPrompt,
+    MCPResource,
+    MCPTool,
+    SimpleMCPServer,
+    parse_request_context,
+    require_user_id,
+)
 
 
 def build_server() -> SimpleMCPServer:
     store = KnowledgeStore()
-    server = SimpleMCPServer(name="knowledge-mcp-server", version="0.1.0")
+    server = SimpleMCPServer(name="knowledge-mcp-server", version="0.2.0")
 
     def _format_results(results: list[dict], icon: str = "📄", limit: int = 300) -> str:
         if not results:
@@ -23,7 +33,60 @@ def build_server() -> SimpleMCPServer:
             )
         return "\n\n".join(lines)
 
-    def search_knowledge(arguments: dict) -> str:
+    def _format_document_matches(matches: list[search_service.ChunkMatch]) -> tuple[str, list[dict]]:
+        if not matches:
+            return "未找到相关文档片段", []
+        refs = []
+        lines = []
+        for index, match in enumerate(matches, start=1):
+            lines.append(
+                f"📄 {index}. [{match.chunk_title or match.document_title}] "
+                f"(文档ID: {match.document_id}, 相关度: {match.score:.2f})\n"
+                f"   {match.snippet}"
+            )
+            refs.append(
+                {
+                    "document_id": match.document_id,
+                    "title": match.chunk_title or match.document_title,
+                    "snippet": match.snippet,
+                    "score": round(match.score, 4),
+                }
+            )
+        return "\n\n".join(lines), refs
+
+    def _build_tool_payload(text: str, refs: list[dict] | None = None) -> dict:
+        refs = refs or []
+        return {
+            "content": [{"type": "text", "text": text}],
+            "structuredContent": {"refs": refs},
+            "refs": refs,
+            "resourceRefs": [
+                {
+                    "uri": f"knowledge://document/{ref['document_id']}",
+                    "title": ref["title"],
+                    "document_id": ref["document_id"],
+                }
+                for ref in refs
+            ],
+            "metadata": {"refs_count": len(refs)},
+            "isError": False,
+        }
+
+    def _get_user(db: Session, user_id: int) -> User:
+        user = db.query(User).filter(User.id == user_id).first()
+        if user is None:
+            raise ValueError("User not found")
+        return user
+
+    def _resolve_document_id(arguments: dict, raw_context: dict) -> int | None:
+        context = parse_request_context(raw_context)
+        if context.document_id is not None:
+            return context.document_id
+        explicit = arguments.get("document_id")
+        return int(explicit) if explicit not in (None, "") else None
+
+    def search_knowledge(arguments: dict, raw_context: dict) -> str:
+        del raw_context
         query = str(arguments.get("query") or "").strip()
         if not query:
             raise ValueError("query is required")
@@ -31,7 +94,8 @@ def build_server() -> SimpleMCPServer:
         top_k = int(arguments.get("top_k") or 5)
         return _format_results(store.search_knowledge(query, domain=domain, top_k=top_k))
 
-    def lookup_rule(arguments: dict) -> str:
+    def lookup_rule(arguments: dict, raw_context: dict) -> str:
+        del raw_context
         query = str(arguments.get("query") or "").strip()
         if not query:
             raise ValueError("query is required")
@@ -39,7 +103,8 @@ def build_server() -> SimpleMCPServer:
         top_k = int(arguments.get("top_k") or 5)
         return _format_results(store.search_rules(query, domain=domain, top_k=top_k), icon="📋")
 
-    def retrieve_case(arguments: dict) -> str:
+    def retrieve_case(arguments: dict, raw_context: dict) -> str:
+        del raw_context
         query = str(arguments.get("query") or "").strip()
         if not query:
             raise ValueError("query is required")
@@ -48,14 +113,21 @@ def build_server() -> SimpleMCPServer:
         top_k = int(arguments.get("top_k") or 3)
         return _format_results(store.search_cases(query, tags=tags, top_k=top_k), icon="📌", limit=400)
 
-    def save_experience(arguments: dict) -> str:
+    def save_experience(arguments: dict, raw_context: dict) -> str:
         content = str(arguments.get("content") or "").strip()
         if not content:
             raise ValueError("content is required")
+        context = parse_request_context(raw_context)
         scenario = str(arguments.get("scenario") or "").strip()
         outcome = str(arguments.get("outcome") or "").strip()
         raw_tags = str(arguments.get("tags") or "").strip()
         tags = [item.strip() for item in raw_tags.split(",") if item.strip()]
+        metadata = {
+            "scenario": scenario,
+            "outcome": outcome,
+            "user_id": context.user_id,
+            "session_id": context.session_id,
+        }
         chunk = KnowledgeChunk(
             content=content,
             doc_type="case",
@@ -63,40 +135,129 @@ def build_server() -> SimpleMCPServer:
             tags=tags,
             title=f"经验: {scenario}" if scenario else "经验沉淀",
             title_path=f"经验库 > {scenario}" if scenario else "经验库",
-            metadata={"scenario": scenario, "outcome": outcome},
+            metadata={key: value for key, value in metadata.items() if value not in (None, "")},
         )
         chunk_id = store.add_chunk(chunk)
         return f"已保存到经验库 (id: {chunk_id})"
 
-    def search_document_chunks(arguments: dict) -> str:
+    def search_document_chunks(arguments: dict, raw_context: dict) -> dict:
         query = str(arguments.get("query") or "").strip()
-        if not query:
-            raise ValueError("query is required")
-        domain = str(arguments.get("domain") or "").strip() or None
         top_k = int(arguments.get("top_k") or 5)
-        doc_type = str(arguments.get("doc_type") or "knowledge").strip() or "knowledge"
-        results = store.search(query, doc_type=doc_type, domain=domain, top_k=top_k)
-        return _format_results(results, icon="🧩")
+        document_id = _resolve_document_id(arguments, raw_context)
+        user_id = require_user_id(parse_request_context(raw_context))
 
-    def stats_resource() -> dict:
-        return store.stats()
+        with SessionLocal() as db:
+            user = _get_user(db, user_id)
+            matches = search_service.retrieve_relevant_chunks(
+                db,
+                user=user,
+                query=query,
+                top_k=top_k,
+                document_id=document_id,
+                published_only=False,
+            )
+        text, refs = _format_document_matches(matches)
+        return _build_tool_payload(text, refs)
 
-    def top_knowledge_resource() -> list[dict]:
-        collection = store.collections["knowledge"]
-        count = min(collection.count(), 10)
-        if count <= 0:
-            return []
-        rows = collection.get(limit=count, include=["documents", "metadatas"])
-        payload = []
-        for chunk_id, document, metadata in zip(
-            rows.get("ids", []),
-            rows.get("documents", []),
-            rows.get("metadatas", []),
-        ):
-            payload.append({"id": chunk_id, "content": document, "metadata": metadata})
-        return payload
+    def search_documents(arguments: dict, raw_context: dict) -> dict:
+        query = str(arguments.get("query") or "").strip()
+        top_k = int(arguments.get("top_k") or 5)
+        domain = str(arguments.get("domain") or "").strip() or None
+        user_id = require_user_id(parse_request_context(raw_context))
+        with SessionLocal() as db:
+            user = _get_user(db, user_id)
+            results = search_service.search_documents(
+                db,
+                user=user,
+                query=query,
+                top_k=top_k,
+                domain=domain,
+                published_only=False,
+            )
+        refs = [
+            {
+                "document_id": item.document_id,
+                "title": item.title,
+                "snippet": item.snippet,
+                "score": round(item.score, 4),
+            }
+            for item in results
+        ]
+        if not refs:
+            return _build_tool_payload("未找到相关文档")
+        lines = []
+        for index, item in enumerate(refs, start=1):
+            lines.append(
+                f"📚 {index}. [{item['title']}] (文档ID: {item['document_id']}, 相关度: {item['score']:.2f})\n"
+                f"   {item['snippet']}"
+            )
+        return _build_tool_payload("\n\n".join(lines), refs)
 
-    def knowledge_summary_prompt(arguments: dict) -> dict:
+    def get_document_summary(arguments: dict, raw_context: dict) -> dict:
+        document_id = _resolve_document_id(arguments, raw_context)
+        if document_id is None:
+            raise ValueError("document_id is required")
+        user_id = require_user_id(parse_request_context(raw_context))
+        with SessionLocal() as db:
+            user = _get_user(db, user_id)
+            document = document_service.get_document(db, document_id, user)
+            if document is None:
+                raise ValueError("Document not found")
+        summary = document.summary or "该文档暂无摘要。"
+        refs = [
+            {
+                "document_id": document.id,
+                "title": document.title,
+                "snippet": summary[:160],
+                "score": 1.0,
+            }
+        ]
+        text = f"文档《{document.title}》摘要：\n{summary}"
+        return _build_tool_payload(text, refs)
+
+    def list_user_documents(arguments: dict, raw_context: dict) -> dict:
+        top_k = int(arguments.get("top_k") or 10)
+        domain = str(arguments.get("domain") or "").strip() or None
+        user_id = require_user_id(parse_request_context(raw_context))
+        with SessionLocal() as db:
+            user = _get_user(db, user_id)
+            docs = document_service.list_documents(db, user, domain=domain, published_only=False)
+        if not docs:
+            return _build_tool_payload("当前用户暂无可用文档")
+        refs = [
+            {
+                "document_id": item.id,
+                "title": item.title,
+                "snippet": item.summary[:160] or "暂无摘要",
+                "score": 1.0,
+            }
+            for item in docs[:top_k]
+        ]
+        lines = []
+        for index, item in enumerate(docs[:top_k], start=1):
+            lines.append(
+                f"📁 {index}. [{item.title}] (文档ID: {item.id}, 状态: {item.status}, chunk数: {item.chunk_count})\n"
+                f"   {item.summary[:160] or '暂无摘要'}"
+            )
+        return _build_tool_payload("\n\n".join(lines), refs)
+
+    def stats_resource(arguments: dict, raw_context: dict) -> dict:
+        del arguments
+        context = parse_request_context(raw_context)
+        stats = {"knowledge_store": store.stats()}
+        if context.user_id is None:
+            return stats
+        with SessionLocal() as db:
+            user = _get_user(db, context.user_id)
+            docs = document_service.list_documents(db, user, published_only=False)
+        stats["user_documents"] = {
+            "count": len(docs),
+            "ready_count": sum(1 for item in docs if item.status == "ready"),
+        }
+        return stats
+
+    def knowledge_summary_prompt(arguments: dict, raw_context: dict) -> dict:
+        del raw_context
         query = str(arguments.get("query") or "").strip()
         return {
             "description": "Knowledge summary helper prompt",
@@ -105,7 +266,7 @@ def build_server() -> SimpleMCPServer:
                     "role": "user",
                     "content": {
                         "type": "text",
-                        "text": f"请先检索知识库，再基于结果总结与下列问题相关的关键知识：{query}",
+                        "text": f"请先检索知识库或相关文档，再基于结果总结与下列问题相关的关键信息：{query}",
                     },
                 }
             ],
@@ -179,18 +340,59 @@ def build_server() -> SimpleMCPServer:
     server.register_tool(
         MCPTool(
             name="search_document_chunks",
-            description="搜索知识片段，适合文档问答和知识定位。",
+            description="搜索当前用户可访问文档中的相关片段，适合文档问答与总结。",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "搜索查询，可为空以返回文档前几个片段"},
+                    "document_id": {"type": "integer", "description": "限定单篇文档，可选"},
+                    "top_k": {"type": "integer", "description": "返回条数，默认 5"},
+                },
+            },
+            handler=search_document_chunks,
+        )
+    )
+    server.register_tool(
+        MCPTool(
+            name="search_documents",
+            description="搜索当前用户自己的文档列表，适合先定位文档再继续问答。",
             input_schema={
                 "type": "object",
                 "properties": {
                     "query": {"type": "string", "description": "搜索查询"},
                     "domain": {"type": "string", "description": "限定领域"},
-                    "doc_type": {"type": "string", "description": "knowledge/rule/case"},
                     "top_k": {"type": "integer", "description": "返回条数，默认 5"},
                 },
                 "required": ["query"],
             },
-            handler=search_document_chunks,
+            handler=search_documents,
+        )
+    )
+    server.register_tool(
+        MCPTool(
+            name="get_document_summary",
+            description="获取当前用户某个文档的摘要，适合单文档总结和快速概览。",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "document_id": {"type": "integer", "description": "文档 ID，可为空时使用上下文 document_id"},
+                },
+            },
+            handler=get_document_summary,
+        )
+    )
+    server.register_tool(
+        MCPTool(
+            name="list_user_documents",
+            description="列出当前用户上传过的文档，帮助模型了解可访问资料范围。",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "domain": {"type": "string", "description": "限定领域"},
+                    "top_k": {"type": "integer", "description": "返回条数，默认 10"},
+                },
+            },
+            handler=list_user_documents,
         )
     )
 
@@ -198,18 +400,9 @@ def build_server() -> SimpleMCPServer:
         MCPResource(
             uri="knowledge://stats",
             name="Knowledge Stats",
-            description="知识库统计信息",
+            description="知识库与当前用户文档统计信息",
             mime_type="application/json",
             handler=stats_resource,
-        )
-    )
-    server.register_resource(
-        MCPResource(
-            uri="knowledge://top-knowledge",
-            name="Top Knowledge Chunks",
-            description="知识库中的前若干条知识片段",
-            mime_type="application/json",
-            handler=top_knowledge_resource,
         )
     )
 

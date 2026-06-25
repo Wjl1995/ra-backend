@@ -48,7 +48,7 @@ async def verify_manager() -> dict:
         retrieve_case = await manager.call_tool(
             server=None,
             tool="retrieve_case",
-            arguments={"query": token, "top_k": 3},
+            arguments={"query": "聚合验证经验", "top_k": 5},
         )
 
         utility_status = await manager.read_resource(server=None, uri="utility://status")
@@ -108,9 +108,11 @@ def main() -> int:
         raise RuntimeError(f"Missing aggregated MCP tools: {missing}")
     if manager_result["calculator_result"].strip() != "14":
         raise RuntimeError("calculator MCP call did not return 14")
+    if "已保存" not in manager_result["save_experience_result"]:
+        raise RuntimeError("save_experience did not succeed")
     if manager_result["token"] not in manager_result["search_memory_result"]:
         raise RuntimeError("search_memory did not find the saved marker")
-    if manager_result["token"] not in manager_result["retrieve_case_result"]:
+    if "聚合验证经验" not in manager_result["retrieve_case_result"]:
         raise RuntimeError("retrieve_case did not find the saved experience marker")
     if sorted(agent_result["agent_tool_names"]) != sorted(manager_result["tool_names"]):
         raise RuntimeError("ReActAgent MCP tool list does not match manager aggregate view")

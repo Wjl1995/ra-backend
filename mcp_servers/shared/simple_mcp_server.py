@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import inspect
 import sys
 import traceback
 from dataclasses import dataclass, field
@@ -177,6 +178,7 @@ class SimpleMCPServer:
     def _handle_tool_call(self, params: dict[str, Any]) -> dict[str, Any]:
         name = str(params.get("name") or "").strip()
         arguments = params.get("arguments") or {}
+        context = params.get("context") or {}
         tool = self.tools.get(name)
         if tool is None:
             raise JsonRpcError(-32602, f"Unknown tool: {name}")
@@ -185,7 +187,7 @@ class SimpleMCPServer:
             raise JsonRpcError(-32602, "Tool arguments must be an object")
 
         try:
-            payload = tool.handler(arguments)
+            payload = self._invoke_handler(tool.handler, arguments, context)
             if isinstance(payload, dict) and "content" in payload:
                 return payload
             return {
@@ -210,11 +212,12 @@ class SimpleMCPServer:
 
     def _handle_resource_read(self, params: dict[str, Any]) -> dict[str, Any]:
         uri = str(params.get("uri") or "").strip()
+        context = params.get("context") or {}
         resource = self.resources.get(uri)
         if resource is None or resource.handler is None:
             raise JsonRpcError(-32602, f"Unknown resource: {uri}")
 
-        payload = resource.handler()
+        payload = self._invoke_handler(resource.handler, {}, context)
         return {
             "contents": [
                 {
@@ -228,11 +231,12 @@ class SimpleMCPServer:
     def _handle_prompt_get(self, params: dict[str, Any]) -> dict[str, Any]:
         name = str(params.get("name") or "").strip()
         arguments = params.get("arguments") or {}
+        context = params.get("context") or {}
         prompt = self.prompts.get(name)
         if prompt is None or prompt.handler is None:
             raise JsonRpcError(-32602, f"Unknown prompt: {name}")
 
-        payload = prompt.handler(arguments)
+        payload = self._invoke_handler(prompt.handler, arguments, context)
         if isinstance(payload, dict):
             return payload
         return {
@@ -253,6 +257,15 @@ class SimpleMCPServer:
         if isinstance(payload, str):
             return payload
         return json.dumps(payload, ensure_ascii=False, indent=2)
+
+    @staticmethod
+    def _invoke_handler(handler: Callable, arguments: dict[str, Any], context: dict[str, Any]) -> Any:
+        params = inspect.signature(handler).parameters
+        if len(params) <= 0:
+            return handler()
+        if len(params) == 1:
+            return handler(arguments)
+        return handler(arguments, context)
 
     @staticmethod
     def _read_message() -> dict[str, Any] | None:
