@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-import json
 import inspect
+import json
+import re
 import sys
 import traceback
 from dataclasses import dataclass, field
@@ -41,7 +42,8 @@ class MCPResource:
     name: str
     description: str = ""
     mime_type: str = "application/json"
-    handler: Callable[[], Any] | None = None
+    handler: Callable[..., Any] | None = None
+    templates: list[dict[str, Any]] = field(default_factory=list)
 
     def to_payload(self) -> dict[str, Any]:
         payload = {
@@ -52,6 +54,8 @@ class MCPResource:
             payload["description"] = self.description
         if self.mime_type:
             payload["mimeType"] = self.mime_type
+        if self.templates:
+            payload["templates"] = self.templates
         return payload
 
 
@@ -215,9 +219,14 @@ class SimpleMCPServer:
         context = params.get("context") or {}
         resource = self.resources.get(uri)
         if resource is None or resource.handler is None:
+            resource = self._find_resource_by_uri(uri)
+        if resource is None or resource.handler is None:
             raise JsonRpcError(-32602, f"Unknown resource: {uri}")
 
-        payload = self._invoke_handler(resource.handler, {}, context)
+        arguments = params.get("arguments") or {}
+        if not isinstance(arguments, dict):
+            raise JsonRpcError(-32602, "Resource arguments must be an object")
+        payload = self._invoke_handler(resource.handler, self._resource_arguments_from_uri(resource, uri, arguments), context)
         return {
             "contents": [
                 {
@@ -266,6 +275,60 @@ class SimpleMCPServer:
         if len(params) == 1:
             return handler(arguments)
         return handler(arguments, context)
+
+    def _find_resource_by_uri(self, uri: str) -> MCPResource | None:
+        for resource in self.resources.values():
+            if self._resource_matches_uri(resource, uri):
+                return resource
+        return None
+
+    @staticmethod
+    def _resource_matches_uri(resource: MCPResource, uri: str) -> bool:
+        if resource.uri == uri:
+            return True
+        for template in resource.templates:
+            template_uri = str(template.get("uriTemplate") or template.get("uri_template") or "").strip()
+            if template_uri and SimpleMCPServer._uri_template_matches(template_uri, uri):
+                return True
+        return False
+
+    @staticmethod
+    def _uri_template_matches(template: str, uri: str) -> bool:
+        pattern = re.escape(template)
+        pattern = re.sub(r"\\\{[^{}]+\\\}", r"[^/]+", pattern)
+        return re.fullmatch(pattern, uri) is not None
+
+    @staticmethod
+    def _resource_arguments_from_uri(resource: MCPResource, uri: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        resolved = dict(arguments)
+        resolved.setdefault("uri", uri)
+        for template in resource.templates:
+            template_uri = str(template.get("uriTemplate") or template.get("uri_template") or "").strip()
+            if not template_uri:
+                continue
+            match = SimpleMCPServer._uri_template_capture(template_uri, uri)
+            if match is not None:
+                for key, value in match.items():
+                    resolved.setdefault(key, value)
+                break
+        return resolved
+
+    @staticmethod
+    def _uri_template_capture(template: str, uri: str) -> dict[str, str] | None:
+        pattern_parts: list[str] = []
+        cursor = 0
+        keys: list[str] = []
+        for match in re.finditer(r"\{([^{}]+)\}", template):
+            pattern_parts.append(re.escape(template[cursor:match.start()]))
+            keys.append(match.group(1))
+            pattern_parts.append(r"([^/]+)")
+            cursor = match.end()
+        pattern_parts.append(re.escape(template[cursor:]))
+        pattern = "".join(pattern_parts)
+        match = re.fullmatch(pattern, uri)
+        if not match:
+            return None
+        return {key: value for key, value in zip(keys, match.groups())}
 
     @staticmethod
     def _read_message() -> dict[str, Any] | None:

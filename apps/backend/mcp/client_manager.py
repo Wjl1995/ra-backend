@@ -3,6 +3,7 @@ from __future__ import annotations
 import atexit
 import json
 import os
+import re
 import subprocess
 import threading
 from dataclasses import dataclass, field
@@ -234,11 +235,17 @@ class MCPClientManager:
         server = self._resource_routes.get(uri)
         if server:
             return server
+        for route, server_name in self._resource_routes.items():
+            if self._uri_matches(route, uri):
+                return server_name
         for config in self.registry.enabled():
             self._fetch_resources(config.name)
         server = self._resource_routes.get(uri)
         if server:
             return server
+        for route, server_name in self._resource_routes.items():
+            if self._uri_matches(route, uri):
+                return server_name
         raise MCPToolError(f"MCP resource '{uri}' is not exposed by any registered server")
 
     def _resolve_prompt_server(self, name: str) -> str:
@@ -642,3 +649,11 @@ class MCPClientManager:
                 f"Duplicate MCP {kind} '{key}' exposed by both '{existing}' and '{server_name}'"
             )
         routes[key] = server_name
+
+    @staticmethod
+    def _uri_matches(template: str, uri: str) -> bool:
+        if template == uri:
+            return True
+        pattern = re.escape(template)
+        pattern = re.sub(r"\\\{[^{}]+\\\}", r"[^/]+", pattern)
+        return re.fullmatch(pattern, uri) is not None

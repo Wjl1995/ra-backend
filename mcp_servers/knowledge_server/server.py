@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import json
+
 from sqlalchemy.orm import Session
 
 from apps.backend.database import SessionLocal
-from apps.backend.models import Document, User
+from apps.backend.models import Document, DocumentChunk, User
 from apps.backend.services import document_service, search_service
 from knowledge.store import KnowledgeChunk, KnowledgeStore
 from mcp_servers.shared import (
@@ -77,6 +79,16 @@ def build_server() -> SimpleMCPServer:
         if user is None:
             raise ValueError("User not found")
         return user
+
+    def _get_document(db: Session, document_id: int, user_id: int) -> Document:
+        document = (
+            db.query(Document)
+            .filter(Document.id == document_id, Document.user_id == user_id)
+            .first()
+        )
+        if document is None:
+            raise ValueError("Document not found")
+        return document
 
     def _resolve_document_id(arguments: dict, raw_context: dict) -> int | None:
         context = parse_request_context(raw_context)
@@ -199,10 +211,8 @@ def build_server() -> SimpleMCPServer:
             raise ValueError("document_id is required")
         user_id = require_user_id(parse_request_context(raw_context))
         with SessionLocal() as db:
-            user = _get_user(db, user_id)
-            document = document_service.get_document(db, document_id, user)
-            if document is None:
-                raise ValueError("Document not found")
+            _get_user(db, user_id)
+            document = _get_document(db, document_id, user_id)
         summary = document.summary or "该文档暂无摘要。"
         refs = [
             {
@@ -256,6 +266,70 @@ def build_server() -> SimpleMCPServer:
         }
         return stats
 
+    def document_resource(arguments: dict, raw_context: dict) -> dict:
+        document_id = _resolve_document_id(arguments, raw_context)
+        if document_id is None:
+            raise ValueError("document_id is required")
+        user_id = require_user_id(parse_request_context(raw_context))
+        with SessionLocal() as db:
+            _get_user(db, user_id)
+            document = _get_document(db, document_id, user_id)
+            chunks = (
+                db.query(DocumentChunk)
+                .filter(DocumentChunk.document_id == document_id)
+                .order_by(DocumentChunk.id.asc())
+                .all()
+            )
+        return {
+            "document": {
+                "id": document.id,
+                "title": document.title,
+                "domain": document.domain,
+                "summary": document.summary,
+                "status": document.status,
+                "is_published": document.is_published,
+                "chunk_count": len(chunks),
+                "created_at": document.created_at.isoformat() if document.created_at else None,
+                "tags": json.loads(document.tags_json or "[]"),
+            },
+            "chunks": [
+                {
+                    "id": chunk.id,
+                    "title": chunk.title,
+                    "content": chunk.content,
+                }
+                for chunk in chunks
+            ],
+        }
+
+    def document_outline_resource(arguments: dict, raw_context: dict) -> dict:
+        document_id = _resolve_document_id(arguments, raw_context)
+        if document_id is None:
+            raise ValueError("document_id is required")
+        user_id = require_user_id(parse_request_context(raw_context))
+        with SessionLocal() as db:
+            _get_user(db, user_id)
+            document = _get_document(db, document_id, user_id)
+            chunks = (
+                db.query(DocumentChunk)
+                .filter(DocumentChunk.document_id == document_id)
+                .order_by(DocumentChunk.id.asc())
+                .all()
+            )
+        outline = [
+            {
+                "title": chunk.title or f"Section {index}",
+                "summary": chunk.content[:160],
+            }
+            for index, chunk in enumerate(chunks, start=1)
+            if chunk.content.strip()
+        ]
+        return {
+            "document_id": document.id,
+            "title": document.title,
+            "outline": outline,
+        }
+
     def knowledge_summary_prompt(arguments: dict, raw_context: dict) -> dict:
         del raw_context
         query = str(arguments.get("query") or "").strip()
@@ -267,6 +341,70 @@ def build_server() -> SimpleMCPServer:
                     "content": {
                         "type": "text",
                         "text": f"请先检索知识库或相关文档，再基于结果总结与下列问题相关的关键信息：{query}",
+                    },
+                }
+            ],
+        }
+
+    def document_summary_prompt(arguments: dict, raw_context: dict) -> dict:
+        del raw_context
+        document_id = arguments.get("document_id")
+        return {
+            "description": "Document summary helper prompt",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": {
+                        "type": "text",
+                        "text": f"请总结文档 document_id={document_id} 的核心内容，并重点关注标题、结构和结论。",
+                    },
+                }
+            ],
+        }
+
+    def knowledge_qa_prompt(arguments: dict, raw_context: dict) -> dict:
+        del raw_context
+        query = str(arguments.get("query") or "").strip()
+        return {
+            "description": "Knowledge Q&A helper prompt",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": {
+                        "type": "text",
+                        "text": f"请先调用知识检索工具，再回答：{query}",
+                    },
+                }
+            ],
+        }
+
+    def rule_audit_prompt(arguments: dict, raw_context: dict) -> dict:
+        del raw_context
+        query = str(arguments.get("query") or "").strip()
+        return {
+            "description": "Rule audit helper prompt",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": {
+                        "type": "text",
+                        "text": f"请先查规则与约束，再判断以下内容是否允许：{query}",
+                    },
+                }
+            ],
+        }
+
+    def case_reference_prompt(arguments: dict, raw_context: dict) -> dict:
+        del raw_context
+        query = str(arguments.get("query") or "").strip()
+        return {
+            "description": "Case reference helper prompt",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": {
+                        "type": "text",
+                        "text": f"请检索历史案例，并总结与以下问题相似的处理经验：{query}",
                     },
                 }
             ],
@@ -405,6 +543,30 @@ def build_server() -> SimpleMCPServer:
             handler=stats_resource,
         )
     )
+    server.register_resource(
+        MCPResource(
+            uri="knowledge://document/{document_id}",
+            name="Knowledge Document",
+            description="当前用户可访问的单篇文档详情",
+            mime_type="application/json",
+            handler=document_resource,
+            templates=[
+                {"name": "document", "description": "按 document_id 获取文档详情", "uriTemplate": "knowledge://document/{document_id}"}
+            ],
+        )
+    )
+    server.register_resource(
+        MCPResource(
+            uri="knowledge://document/{document_id}/outline",
+            name="Knowledge Document Outline",
+            description="当前用户可访问的单篇文档 outline",
+            mime_type="application/json",
+            handler=document_outline_resource,
+            templates=[
+                {"name": "outline", "description": "按 document_id 获取文档 outline", "uriTemplate": "knowledge://document/{document_id}/outline"}
+            ],
+        )
+    )
 
     server.register_prompt(
         MCPPrompt(
@@ -412,6 +574,38 @@ def build_server() -> SimpleMCPServer:
             description="让模型先检索知识库再总结的提示模板",
             arguments=[{"name": "query", "description": "待总结的问题", "required": True}],
             handler=knowledge_summary_prompt,
+        )
+    )
+    server.register_prompt(
+        MCPPrompt(
+            name="document_summary",
+            description="单文档总结提示模板",
+            arguments=[{"name": "document_id", "description": "文档 ID", "required": True}],
+            handler=document_summary_prompt,
+        )
+    )
+    server.register_prompt(
+        MCPPrompt(
+            name="knowledge_qa",
+            description="知识问答提示模板",
+            arguments=[{"name": "query", "description": "待回答的问题", "required": True}],
+            handler=knowledge_qa_prompt,
+        )
+    )
+    server.register_prompt(
+        MCPPrompt(
+            name="rule_audit",
+            description="规则审查提示模板",
+            arguments=[{"name": "query", "description": "待审查的问题", "required": True}],
+            handler=rule_audit_prompt,
+        )
+    )
+    server.register_prompt(
+        MCPPrompt(
+            name="case_reference",
+            description="案例参考提示模板",
+            arguments=[{"name": "query", "description": "待参考的问题", "required": True}],
+            handler=case_reference_prompt,
         )
     )
 

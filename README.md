@@ -164,3 +164,17 @@ Behavior notes:
 - `chat_service` now routes through `AgentOrchestrator` by default.
 - The backend passes `user_id`, `session_id`, and `document_id` into MCP tool calls to preserve user-level document isolation.
 - `AGENT_TOOL_MODE=mcp` is the recommended online setting so the chat path uses the MCP servers instead of the local in-process registry.
+
+## MCP Phase 4
+
+Phase 4 focuses on resources and prompts:
+
+- `knowledge://document/{document_id}`
+- `knowledge://document/{document_id}/outline`
+- `memory://user/{user_id}/recent`
+- `document_summary`
+- `knowledge_qa`
+- `rule_audit`
+- `case_reference`
+
+The server and client routing now support template-style resource URIs.

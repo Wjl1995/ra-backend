@@ -3,12 +3,14 @@ from __future__ import annotations
 from sqlalchemy import create_engine
 from sqlalchemy.orm import declarative_base, sessionmaker
 
-from apps.backend.config import settings
+from apps.backend.config import ensure_runtime_directories, settings
 
 
 def _is_sqlite(url: str) -> bool:
     return url.startswith("sqlite")
 
+
+ensure_runtime_directories()
 
 engine = create_engine(
     settings.database_url,

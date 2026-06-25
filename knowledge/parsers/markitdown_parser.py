@@ -87,11 +87,8 @@ class HybridParser(BaseParser):
             self.markitdown_parser = MarkItDownParser()
 
     def supported_extensions(self) -> list[str]:
-        # 合并两者支持的扩展名
-        extensions = set(self.fallback_parser.supported_extensions())
-        if self.prefer_markitdown:
-            extensions.update(self.markitdown_parser.supported_extensions())
-        return list(extensions)
+        # 仅声明原生回退解析器负责的扩展名，避免不同格式相互覆盖
+        return list(self.fallback_parser.supported_extensions())
 
     def to_markdown(self, file_path: str, output_path: Optional[str] = None) -> str:
         file_ext = Path(file_path).suffix.lower()

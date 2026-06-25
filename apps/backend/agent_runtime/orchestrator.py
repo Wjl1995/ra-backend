@@ -27,6 +27,13 @@ DEFAULT_SYSTEM_PROMPT = """你是 ReActAgent，服务于微信小程序用户。
 3. 尽量引用检索到的文档片段，不要编造不存在的内容。
 """
 
+PROMPT_NAME_HINTS = {
+    "document_summary": "document_summary",
+    "knowledge_qa": "knowledge_qa",
+    "rule_audit": "rule_audit",
+    "case_reference": "case_reference",
+}
+
 
 class AgentOrchestrator:
     """
@@ -188,6 +195,10 @@ class AgentOrchestrator:
         if document_context:
             messages.append({"role": "system", "content": document_context})
 
+        prompt_messages = self._build_prompt_messages(request, context, prompts)
+        if prompt_messages:
+            messages.extend(prompt_messages)
+
         history = list(context.get("history_messages", []))
         if history:
             messages.extend(history)
@@ -212,7 +223,7 @@ class AgentOrchestrator:
         if resources:
             lines.append("可用资源：" + ", ".join(item.uri for item in resources))
         if prompts:
-            lines.append("可用提示模板：" + ", ".join(item.name for item in prompts))
+            lines.append("已启用独立提示模板能力，按场景自动选择，不在系统提示词里硬编码模板目录。")
         return "\n".join(lines)
 
     @staticmethod
@@ -287,6 +298,54 @@ class AgentOrchestrator:
                         parts.append(str(text_value))
             return "".join(parts)
         return str(content or "")
+
+    def _build_prompt_messages(
+        self,
+        request: AgentTurnRequest,
+        context: dict[str, Any],
+        prompts: list[Any],
+    ) -> list[dict[str, Any]]:
+        prompt_name = self._select_prompt_name(request, context, {item.name for item in prompts})
+        if not prompt_name:
+            return []
+        try:
+            rendered = self.tool_provider.get_prompt(
+                prompt_name,
+                arguments={
+                    "query": request.query,
+                    "document_id": context.get("document_id"),
+                },
+                context=context,
+            )
+        except Exception:
+            return []
+        messages = list(rendered.messages or [])
+        if not messages and rendered.content:
+            messages = [{"role": "system", "content": rendered.content}]
+        if not messages:
+            return []
+        return [{"role": "system", "content": f"已启用提示模板: {rendered.name}"}] + messages
+
+    @staticmethod
+    def _select_prompt_name(
+        request: AgentTurnRequest,
+        context: dict[str, Any],
+        prompt_names: set[str],
+    ) -> str | None:
+        query = (request.query or "").strip().lower()
+        document_id = context.get("document_id")
+        if document_id is not None and any(keyword in query for keyword in ("总结", "概括", "摘要", "summary", "overview")):
+            if "document_summary" in prompt_names:
+                return "document_summary"
+        if any(keyword in query for keyword in ("规则", "允许", "可不可以", "能不能", "audit", "policy")):
+            if "rule_audit" in prompt_names:
+                return "rule_audit"
+        if any(keyword in query for keyword in ("案例", "经验", "类似", "case", "reference")):
+            if "case_reference" in prompt_names:
+                return "case_reference"
+        if "knowledge_qa" in prompt_names:
+            return "knowledge_qa"
+        return None
 
     @staticmethod
     def _merge_refs(existing: list[dict], incoming: list[dict]) -> list[dict]:

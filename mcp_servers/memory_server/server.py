@@ -67,10 +67,9 @@ def build_server() -> SimpleMCPServer:
         return {"count": count, "user_id": context.user_id}
 
     def recent_resource(arguments: dict, raw_context: dict) -> list[dict]:
-        del arguments
         context = parse_request_context(raw_context)
         collection = memory.long_term.collection
-        limit = min(collection.count(), 10)
+        limit = min(int(arguments.get("limit") or 10), 20, collection.count())
         if limit <= 0:
             return []
         rows = collection.get(limit=limit, include=["documents", "metadatas"])
@@ -85,7 +84,24 @@ def build_server() -> SimpleMCPServer:
         items.sort(key=lambda item: item["metadata"].get("timestamp", ""), reverse=True)
         return items
 
-    def memory_search_prompt(arguments: dict, raw_context: dict) -> dict:
+    def user_recent_resource(arguments: dict, raw_context: dict) -> list[dict]:
+        context = parse_request_context(raw_context)
+        if context.user_id is None:
+            return []
+        limit = min(int(arguments.get("limit") or 5), 10)
+        rows = memory.long_term.collection.get(include=["documents", "metadatas"])
+        documents = rows.get("documents", [])
+        metadatas = rows.get("metadatas", [])
+        ids = rows.get("ids", [])
+        items = []
+        for item_id, document, metadata in zip(ids, documents, metadatas):
+            if str(metadata.get("user_id", "")) != str(context.user_id):
+                continue
+            items.append({"id": item_id, "text": document, "metadata": metadata})
+        items.sort(key=lambda item: item["metadata"].get("timestamp", ""), reverse=True)
+        return items[:limit]
+
+    def memory_recall_prompt(arguments: dict, raw_context: dict) -> dict:
         del raw_context
         query = str(arguments.get("query") or "").strip()
         return {
@@ -150,13 +166,29 @@ def build_server() -> SimpleMCPServer:
             handler=recent_resource,
         )
     )
+    server.register_resource(
+        MCPResource(
+            uri="memory://user/{user_id}/recent",
+            name="User Recent Memories",
+            description="当前用户最近写入的长期记忆",
+            mime_type="application/json",
+            handler=user_recent_resource,
+            templates=[
+                {
+                    "name": "recent",
+                    "description": "当前用户最近写入的长期记忆",
+                    "uriTemplate": "memory://user/{user_id}/recent",
+                }
+            ],
+        )
+    )
 
     server.register_prompt(
         MCPPrompt(
             name="memory_recall",
             description="帮助模型回忆长期记忆的提示模板",
             arguments=[{"name": "query", "description": "需要回忆的查询", "required": True}],
-            handler=memory_search_prompt,
+            handler=memory_recall_prompt,
         )
     )
 
