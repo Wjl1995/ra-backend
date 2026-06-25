@@ -18,6 +18,13 @@ Install dependencies:
 pip install -r requirements.txt
 ```
 
+Debug helpers for memory / knowledge stores:
+
+```bash
+python scripts/debug_memory.py --help
+python scripts/debug_knowledge.py --help
+```
+
 Run the backend scaffold:
 
 ```bash

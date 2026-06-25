@@ -65,9 +65,9 @@
 
 ### 4.2 记忆调试脚本
 ```bash
-python debug_memory.py list      # 列出所有
-python debug_memory.py search "xxx"  # 搜索
-python debug_memory.py add "xxx" [tag]  # 添加
+python scripts/debug_memory.py list
+python scripts/debug_memory.py search "xxx"
+python scripts/debug_memory.py add "xxx" --tag learning
 ```
 
 ---
