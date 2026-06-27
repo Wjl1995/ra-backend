@@ -25,6 +25,16 @@ async def verify_manager() -> dict:
             tool="calculator",
             arguments={"expression": "2 + 3 * 4"},
         )
+        write_markdown_file = await manager.call_tool(
+            server=None,
+            tool="write_markdown_file",
+            arguments={
+                "title": f"聚合验证导出 {token}",
+                "filename_hint": f"aggregate-{token}",
+                "content": f"聚合验证导出内容 {token}",
+            },
+            context={"user_id": 880001},
+        )
         save_memory = await manager.call_tool(
             server=None,
             tool="save_memory",
@@ -61,6 +71,7 @@ async def verify_manager() -> dict:
             "resource_uris": sorted(item["uri"] for item in resources),
             "prompt_names": sorted(item["name"] for item in prompts),
             "calculator_result": calculator["content"],
+            "write_markdown_file_result": write_markdown_file["content"],
             "save_memory_result": save_memory["content"],
             "search_memory_result": search_memory["content"],
             "save_experience_result": save_experience["content"],
@@ -95,6 +106,7 @@ def main() -> int:
         "calculator",
         "get_current_time",
         "json_format",
+        "write_markdown_file",
         "save_memory",
         "search_memory",
         "search_knowledge",
@@ -108,6 +120,8 @@ def main() -> int:
         raise RuntimeError(f"Missing aggregated MCP tools: {missing}")
     if manager_result["calculator_result"].strip() != "14":
         raise RuntimeError("calculator MCP call did not return 14")
+    if "已导出 Markdown 文件" not in manager_result["write_markdown_file_result"]:
+        raise RuntimeError("write_markdown_file did not succeed")
     if "已保存" not in manager_result["save_experience_result"]:
         raise RuntimeError("save_experience did not succeed")
     if manager_result["token"] not in manager_result["search_memory_result"]:

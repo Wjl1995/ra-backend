@@ -39,6 +39,7 @@ class Settings:
     wechat_api_timeout_seconds: float = float(os.getenv("WECHAT_API_TIMEOUT_SECONDS", "10"))
     daily_quota: int = int(os.getenv("DAILY_QUOTA", "50"))
     upload_dir: str = str(_resolve_project_path(os.getenv("UPLOAD_DIR", "./data/uploads")))
+    user_export_dir: str = str(_resolve_project_path(os.getenv("USER_EXPORT_DIR", "./data/user_exports")))
     kimi_api_key: str = os.getenv("KIMI_API_KEY", "")
     kimi_base_url: str = os.getenv("KIMI_BASE_URL", "https://api.moonshot.cn/v1")
     kimi_model: str = os.getenv("KIMI_MODEL", "moonshot-v1-8k")
@@ -59,6 +60,7 @@ settings = Settings()
 
 def ensure_runtime_directories() -> None:
     Path(settings.upload_dir).mkdir(parents=True, exist_ok=True)
+    Path(settings.user_export_dir).mkdir(parents=True, exist_ok=True)
 
     if not settings.database_url.startswith("sqlite:///"):
         return

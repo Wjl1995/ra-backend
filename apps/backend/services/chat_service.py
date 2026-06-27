@@ -2,11 +2,19 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
+from typing import Any
 
 from openai import OpenAI
 from sqlalchemy.orm import Session
 
-from apps.backend.agent_runtime import AgentOrchestrator, AgentRuntimePolicy, AgentTurnRequest, LocalToolProvider, MCPToolProvider
+from apps.backend.agent_runtime import (
+    AgentOrchestrator,
+    AgentRuntimePolicy,
+    AgentTurnRequest,
+    AgentTurnResponse,
+    LocalToolProvider,
+    MCPToolProvider,
+)
 from apps.backend.config import settings
 from apps.backend.models import ChatSession, Message, User
 from apps.backend.mcp import MCPClientManager, build_default_stdio_registry, load_registry_from_json
@@ -72,13 +80,17 @@ def list_messages(db: Session, session_id: int, user: User) -> list[MessageSchem
     )
     result = []
     for message in messages:
-        refs = [RefSchema(**item) for item in json.loads(message.refs_json or "[]")]
+        refs = [RefSchema(**item) for item in _load_json_list(message.refs_json, fallback=[])]
+        runtime_meta = _load_runtime_meta(message.runtime_meta_json)
         result.append(
             MessageSchema(
                 id=message.id,
                 role=message.role,
                 content=message.content,
                 refs=refs,
+                tool_traces=list(runtime_meta.get("tool_traces", [])),
+                resource_refs=list(runtime_meta.get("resource_refs", [])),
+                metadata=dict(runtime_meta.get("metadata", {})),
                 created_at=message.created_at,
             )
         )
@@ -101,10 +113,25 @@ def create_assistant_message(
     user: User,
     content: str,
     refs: list[dict],
+    *,
+    tool_traces: list[dict[str, Any]] | None = None,
+    resource_refs: list[dict[str, Any]] | None = None,
+    metadata: dict[str, Any] | None = None,
 ) -> MessageSchema:
     session = _get_session(db, session_id, user)
     raw_refs = json.dumps(refs, ensure_ascii=False)
-    message = Message(session_id=session.id, role="assistant", content=content, refs_json=raw_refs)
+    runtime_meta = {
+        "tool_traces": list(tool_traces or []),
+        "resource_refs": list(resource_refs or []),
+        "metadata": dict(metadata or {}),
+    }
+    message = Message(
+        session_id=session.id,
+        role="assistant",
+        content=content,
+        refs_json=raw_refs,
+        runtime_meta_json=json.dumps(runtime_meta, ensure_ascii=False),
+    )
     session.updated_at = datetime.utcnow()
     db.add(message)
     db.commit()
@@ -114,6 +141,9 @@ def create_assistant_message(
         role=message.role,
         content=message.content,
         refs=[RefSchema(**item) for item in refs],
+        tool_traces=runtime_meta["tool_traces"],
+        resource_refs=runtime_meta["resource_refs"],
+        metadata=runtime_meta["metadata"],
         created_at=message.created_at,
     )
 
@@ -123,7 +153,7 @@ def build_kimi_answer(
     session_id: int,
     user: User,
     document_id: int | None = None,
-) -> tuple[str, list[dict]]:
+) -> AgentTurnResponse:
     _get_session(db, session_id, user)
     if not settings.kimi_api_key:
         raise RuntimeError("Kimi API key is not configured")
@@ -143,8 +173,9 @@ def build_kimi_answer(
         },
     )
     response = _get_orchestrator().run_chat_turn(request)
-    final_refs = response.refs or refs
-    return response.answer, final_refs
+    if not response.refs:
+        response.refs = refs
+    return response
 
 
 def _get_session(db: Session, session_id: int, user: User) -> ChatSession:
@@ -281,3 +312,25 @@ def _is_summary_request(query: str) -> bool:
     if not normalized:
         return False
     return any(keyword in normalized for keyword in SUMMARY_HINT_KEYWORDS)
+
+
+def _load_json_list(raw_json: str | None, fallback: list[Any]) -> list[Any]:
+    try:
+        payload = json.loads(raw_json or "[]")
+    except json.JSONDecodeError:
+        return list(fallback)
+    return payload if isinstance(payload, list) else list(fallback)
+
+
+def _load_runtime_meta(raw_json: str | None) -> dict[str, Any]:
+    try:
+        payload = json.loads(raw_json or "{}")
+    except json.JSONDecodeError:
+        payload = {}
+    if not isinstance(payload, dict):
+        payload = {}
+    return {
+        "tool_traces": payload.get("tool_traces") if isinstance(payload.get("tool_traces"), list) else [],
+        "resource_refs": payload.get("resource_refs") if isinstance(payload.get("resource_refs"), list) else [],
+        "metadata": payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {},
+    }

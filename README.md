@@ -117,6 +117,13 @@ The repository now includes local stdio MCP server wrappers under `mcp_servers/`
 - `knowledge_server`
 - `utility_server`
 
+Current `utility_server` tools include low-risk helpers such as:
+
+- `calculator`
+- `get_current_time`
+- `json_format`
+- `write_markdown_file` (safe export mode; writes only to `data/user_exports/{user_id}/`)
+
 They currently target Phase 1 wrapping of existing tools and can be inspected locally with:
 
 ```bash

@@ -212,7 +212,8 @@ def run_chat_case(session_id: int, user_id: int, content: str, document_id: int 
         if user is None:
             raise RuntimeError("verification user not found")
         chat_service.create_user_message(db, session_id, user, content)
-        return chat_service.build_kimi_answer(db, session_id, user, document_id=document_id)
+        response = chat_service.build_kimi_answer(db, session_id, user, document_id=document_id)
+        return response.answer, response.refs
 
 
 def main() -> int:

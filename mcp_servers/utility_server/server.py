@@ -1,8 +1,13 @@
 from __future__ import annotations
 
 from datetime import datetime
+from pathlib import Path
+import re
+import uuid
 
+from apps.backend.config import settings
 from mcp_servers.shared import MCPPrompt, MCPResource, MCPTool, SimpleMCPServer
+from mcp_servers.shared.auth_context import parse_request_context, require_user_id
 from tools.tools import _calculator, _get_current_time, _json_format
 
 
@@ -25,11 +30,51 @@ def build_server() -> SimpleMCPServer:
             raise ValueError("text is required")
         return _json_format(text)
 
+    def write_markdown_file(arguments: dict, raw_context: dict) -> dict:
+        content = str(arguments.get("content") or "").strip()
+        if not content:
+            raise ValueError("content is required")
+
+        context = parse_request_context(raw_context)
+        user_id = require_user_id(context)
+        title = str(arguments.get("title") or "").strip()
+        filename_hint = str(arguments.get("filename_hint") or "").strip()
+
+        export_root = Path(settings.user_export_dir) / str(user_id)
+        export_root.mkdir(parents=True, exist_ok=True)
+
+        base_name = _sanitize_filename(filename_hint or title or "report")
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        file_name = f"{base_name}-{timestamp}-{uuid.uuid4().hex[:8]}.md"
+        target = export_root / file_name
+
+        full_content = content
+        if title:
+            full_content = f"# {title}\n\n{content}"
+        target.write_text(full_content, encoding="utf-8")
+
+        relative_path = target.relative_to(Path(settings.user_export_dir))
+        text = f"已导出 Markdown 文件: {target.name}"
+        return {
+            "content": [{"type": "text", "text": text}],
+            "structuredContent": {
+                "file_name": target.name,
+                "relative_path": relative_path.as_posix(),
+            },
+            "metadata": {
+                "file_name": target.name,
+                "relative_path": relative_path.as_posix(),
+                "absolute_path": str(target),
+                "user_id": user_id,
+            },
+            "isError": False,
+        }
+
     def status_resource() -> dict:
         return {
             "server": "utility-mcp-server",
             "time": datetime.now().isoformat(),
-            "tools": ["calculator", "get_current_time", "json_format"],
+            "tools": ["calculator", "get_current_time", "json_format", "write_markdown_file"],
         }
 
     def calculation_prompt(arguments: dict) -> dict:
@@ -83,6 +128,22 @@ def build_server() -> SimpleMCPServer:
             handler=json_format,
         )
     )
+    server.register_tool(
+        MCPTool(
+            name="write_markdown_file",
+            description="为当前用户安全导出 Markdown 文件，只会写入受控导出目录。",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "content": {"type": "string", "description": "Markdown 正文内容"},
+                    "title": {"type": "string", "description": "可选标题，会自动写入一级标题"},
+                    "filename_hint": {"type": "string", "description": "可选文件名提示，不支持自定义路径"},
+                },
+                "required": ["content"],
+            },
+            handler=write_markdown_file,
+        )
+    )
 
     server.register_resource(
         MCPResource(
@@ -104,6 +165,13 @@ def build_server() -> SimpleMCPServer:
     )
 
     return server
+
+
+def _sanitize_filename(value: str) -> str:
+    cleaned = re.sub(r'[<>:"/\\|?*\x00-\x1f]+', "-", value.strip())
+    cleaned = re.sub(r"\s+", "-", cleaned)
+    cleaned = cleaned.strip(" .-_")
+    return cleaned[:64] or "report"
 
 
 if __name__ == "__main__":
