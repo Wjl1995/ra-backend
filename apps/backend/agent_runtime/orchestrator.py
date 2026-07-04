@@ -201,10 +201,10 @@ class AgentOrchestrator:
 
         history = list(context.get("history_messages", []))
         if history:
-            messages.extend(history)
+            messages.extend(self._normalize_messages(history))
         else:
             messages.append({"role": "user", "content": request.query})
-        return messages
+        return self._normalize_messages(messages)
 
     def _build_system_prompt(
         self,
@@ -285,18 +285,44 @@ class AgentOrchestrator:
     @staticmethod
     def _message_text(message: Any) -> str:
         content = getattr(message, "content", "")
+        return AgentOrchestrator._content_to_text(content)
+
+    @staticmethod
+    def _normalize_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        normalized = []
+        for message in messages:
+            if not isinstance(message, dict):
+                continue
+            item = dict(message)
+            item["role"] = str(item.get("role") or "user")
+            item["content"] = AgentOrchestrator._content_to_text(item.get("content", ""))
+            normalized.append(item)
+        return normalized
+
+    @staticmethod
+    def _content_to_text(content: Any) -> str:
         if isinstance(content, str):
             return content
         if isinstance(content, list):
             parts = []
             for item in content:
                 if isinstance(item, dict) and item.get("type") == "text":
-                    parts.append(item.get("text", ""))
+                    parts.append(str(item.get("text", "")))
                 else:
                     text_value = getattr(item, "text", None)
                     if text_value:
                         parts.append(str(text_value))
+                    elif isinstance(item, str):
+                        parts.append(item)
+                    elif item is not None:
+                        parts.append(json.dumps(item, ensure_ascii=False))
             return "".join(parts)
+        if isinstance(content, dict):
+            if content.get("type") == "text":
+                return str(content.get("text", ""))
+            if "text" in content:
+                return str(content.get("text") or "")
+            return json.dumps(content, ensure_ascii=False)
         return str(content or "")
 
     def _build_prompt_messages(
@@ -319,7 +345,7 @@ class AgentOrchestrator:
             )
         except Exception:
             return []
-        messages = list(rendered.messages or [])
+        messages = self._normalize_messages(list(rendered.messages or []))
         if not messages and rendered.content:
             messages = [{"role": "system", "content": rendered.content}]
         if not messages:

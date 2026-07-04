@@ -11,6 +11,12 @@ from apps.backend.config import settings
 from apps.backend.models import Document, DocumentChunk, User
 from apps.backend.schemas import DocumentSchema
 
+TEXT_UPLOAD_EXTENSIONS = {".md", ".json", ".txt"}
+
+
+class UnsupportedDocumentFormat(ValueError):
+    pass
+
 
 def list_documents(
     db: Session,
@@ -49,6 +55,7 @@ async def save_uploaded_document(
     source_name = (title or file.filename or "uploaded-document").strip()
     original_name = file.filename or source_name
     suffix = Path(original_name).suffix
+    _validate_upload_extension(suffix)
     target = upload_dir / f"user-{user.id}-{uuid.uuid4().hex}{suffix}"
     payload = await file.read()
     target.write_bytes(payload)
@@ -92,6 +99,25 @@ async def save_uploaded_document(
     db.commit()
     db.refresh(document)
     return _to_schema(document)
+
+
+def _validate_upload_extension(suffix: str) -> None:
+    normalized = suffix.lower()
+    supported = _supported_upload_extensions()
+    if normalized and normalized in supported:
+        return
+    supported_text = ", ".join(sorted(supported))
+    label = normalized or "unknown"
+    raise UnsupportedDocumentFormat(
+        f"Unsupported file type '{label}'. Please upload one of: {supported_text}. "
+        "Legacy .doc files are not supported; convert them to .docx first."
+    )
+
+
+def _supported_upload_extensions() -> set[str]:
+    from knowledge.parsers import get_supported_extensions
+
+    return TEXT_UPLOAD_EXTENSIONS | set(get_supported_extensions())
 
 
 def _parse_document_chunks(file_path: str, title: str, domain: str) -> list[dict[str, str]]:
