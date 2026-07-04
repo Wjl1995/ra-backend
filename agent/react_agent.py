@@ -16,7 +16,16 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.markdown import Markdown
 
+from apps.backend.agent_runtime.models import ToolDescriptor
+from apps.backend.agent_runtime.tool_provider import LocalToolProvider, MCPToolProvider, ToolProvider
+from apps.backend.mcp import (
+    MCPClientManager,
+    MCPConfigurationError,
+    build_default_stdio_registry,
+    load_registry_from_json,
+)
 from config import LLM_API_KEY, LLM_BASE_URL, LLM_MODEL, LLM_MAX_TOKENS, LLM_TEMPERATURE, MAX_ITERATIONS
+from config import AGENT_TOOL_MODE, MCP_SERVER_CONFIG_JSON
 from memory import AgentMemory
 from tools import ToolRegistry
 from knowledge import KnowledgeStore
@@ -95,6 +104,7 @@ class ReActAgent:
         max_iterations: int = MAX_ITERATIONS,
         memory: Optional[AgentMemory] = None,
         tool_registry: Optional[ToolRegistry] = None,
+        tool_provider: Optional[ToolProvider] = None,
         knowledge_store: Optional[KnowledgeStore] = None,
     ):
         if not api_key or api_key == "your_kimi_api_key_here":
@@ -114,15 +124,37 @@ class ReActAgent:
         # 初始化知识库
         self.knowledge_store = knowledge_store or KnowledgeStore()
 
-        # 初始化工具注册中心（注入 memory + knowledge）
-        self.tools = tool_registry or ToolRegistry.create_default(
+        # 初始化工具提供者。Phase 0 默认仍走本地 ToolRegistry，
+        # Phase 2 起支持通过 AGENT_TOOL_MODE=mcp 切换到本地 stdio MCP servers。
+        local_registry = tool_registry or ToolRegistry.create_default(
             memory=self.memory,
             knowledge_store=self.knowledge_store,
         )
+        self.tool_provider = tool_provider or self._build_tool_provider(local_registry)
+        self.tools = local_registry
+        self._tool_descriptors: dict[str, ToolDescriptor] = {}
+
+    def _build_tool_provider(self, local_registry: ToolRegistry) -> ToolProvider:
+        if AGENT_TOOL_MODE != "mcp":
+            return LocalToolProvider(local_registry)
+
+        try:
+            registry = (
+                load_registry_from_json(MCP_SERVER_CONFIG_JSON)
+                if MCP_SERVER_CONFIG_JSON
+                else build_default_stdio_registry()
+            )
+        except MCPConfigurationError as exc:
+            raise ValueError(f"MCP 配置错误: {exc}") from exc
+
+        client_manager = MCPClientManager(registry)
+        return MCPToolProvider(client_manager=client_manager)
 
     def _build_system_prompt(self, user_query: str) -> str:
+        tool_descriptors = self.tool_provider.list_tools(context={"query": user_query})
+        self._tool_descriptors = {tool.name: tool for tool in tool_descriptors}
         tools_desc = []
-        for tool in self.tools.all_tools():
+        for tool in tool_descriptors:
             params_desc = ", ".join(
                 f"{k}: {v['description']}"
                 for k, v in tool.parameters.get("properties", {}).items()
@@ -203,29 +235,13 @@ class ReActAgent:
 
     def _execute_tool(self, action: str, action_input) -> str:
         """执行工具调用"""
-        tool = self.tools.get(action)
-        if not tool:
-            return f"错误: 未找到工具 '{action}'，可用工具: {[t.name for t in self.tools.all_tools()]}"
-        
         try:
-            if isinstance(action_input, dict):
-                # 字典参数，直接解包
-                return tool.run(**action_input)
-            elif isinstance(action_input, str) and action_input:
-                # 字符串参数，检查工具期望的参数名
-                # 获取工具的参数 schema
-                tool_schema = tool.parameters
-                required_params = tool_schema.get("required", [])
-                if required_params:
-                    # 如果有必填参数，使用第一个参数名
-                    param_name = required_params[0]
-                    return tool.run(**{param_name: action_input})
-                else:
-                    # 没有必填参数，直接调用
-                    return tool.run()
-            else:
-                # 其他情况，直接调用
-                return tool.run()
+            result = self.tool_provider.call_tool(
+                action,
+                action_input,
+                context={"tool": action},
+            )
+            return result.content
         except Exception as e:
             return f"[工具执行错误] {type(e).__name__}: {e}"
 

@@ -7,6 +7,7 @@ from apps.backend.dependencies import get_current_user, get_db
 from apps.backend.models import User
 from apps.backend.schemas import DocumentSchema
 from apps.backend.services import document_service
+from apps.backend.services.document_service import UnsupportedDocumentFormat
 
 router = APIRouter(prefix="/documents", tags=["documents"])
 
@@ -42,11 +43,14 @@ async def create_document(
     current_user: User = Depends(get_current_user),
 ):
     parsed_tags = [item.strip() for item in tags.split(",") if item.strip()]
-    return await document_service.save_uploaded_document(
-        db,
-        current_user,
-        file,
-        domain,
-        parsed_tags,
-        title=title,
-    )
+    try:
+        return await document_service.save_uploaded_document(
+            db,
+            current_user,
+            file,
+            domain,
+            parsed_tags,
+            title=title,
+        )
+    except UnsupportedDocumentFormat as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc

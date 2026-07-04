@@ -55,8 +55,7 @@ if USE_MARKITDOWN and HAS_MARKITDOWN:
     markitdown_only = MarkItDownParser()
     for ext in [".jpg", ".jpeg", ".png", ".mp3", ".wav", ".mp4", ".zip", ".html", ".htm"]:
         if ext not in _PARSER_REGISTRY:
-            register_parser(markitdown_only)
-            break
+            _PARSER_REGISTRY[ext] = markitdown_only
 else:
     # 使用原生解析器
     if not HAS_MARKITDOWN:

@@ -20,3 +20,5 @@ LONG_TERM_MEMORY_TOP_K = 5         # 长期记忆检索返回 Top K 条
 
 # ── ReAct Agent 配置 ──────────────────────────────────────
 MAX_ITERATIONS = 10                  # 最大推理-行动轮次
+AGENT_TOOL_MODE = os.getenv("AGENT_TOOL_MODE", "local").lower()
+MCP_SERVER_CONFIG_JSON = os.getenv("MCP_SERVER_CONFIG_JSON", "")

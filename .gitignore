@@ -8,6 +8,11 @@ env/
 venv/
 .venv/
 .venv-*/
+.dev-env/
+.conda-env/
+.conda-env2/
+.conda-pkgs/
+phase3-chat-*/
 ENV/
 build/
 develop-eggs/

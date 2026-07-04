@@ -29,17 +29,18 @@ class DocxParser(BaseParser):
         
         doc = Document(file_path)
         markdown_parts = []
+        body = doc._body
         
         for block in doc.element.body:
             if block.tag.endswith('p'):
                 # 处理段落
-                para = Paragraph(block, doc._parent)
+                para = Paragraph(block, body)
                 md_line = self._parse_paragraph(para)
                 if md_line:
                     markdown_parts.append(md_line)
             elif block.tag.endswith('tbl'):
                 # 处理表格
-                table = Table(block, doc._parent)
+                table = Table(block, body)
                 md_table = self._parse_table(table)
                 if md_table:
                     markdown_parts.append(md_table)

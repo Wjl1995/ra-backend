@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 from datetime import datetime
 
 from pydantic import BaseModel, Field
@@ -54,6 +56,9 @@ class MessageSchema(BaseModel):
     role: str
     content: str
     refs: list[RefSchema]
+    tool_traces: list[dict[str, Any]] = Field(default_factory=list)
+    resource_refs: list[dict[str, Any]] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime | None = None
 
 

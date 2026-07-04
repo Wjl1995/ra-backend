@@ -49,9 +49,16 @@ def create_app() -> FastAPI:
 
 def ensure_runtime_schema() -> None:
     inspector = inspect(engine)
-    if "documents" not in inspector.get_table_names():
-        return
+    table_names = set(inspector.get_table_names())
 
+    if "documents" in table_names:
+        _ensure_documents_user_id(inspector)
+
+    if "messages" in table_names:
+        _ensure_messages_runtime_meta(inspector)
+
+
+def _ensure_documents_user_id(inspector) -> None:
     columns = {column["name"] for column in inspector.get_columns("documents")}
     if "user_id" in columns:
         return
@@ -69,6 +76,24 @@ def ensure_runtime_schema() -> None:
                     LIMIT 1
                 )
                 WHERE user_id IS NULL
+                """
+            )
+        )
+
+
+def _ensure_messages_runtime_meta(inspector) -> None:
+    columns = {column["name"] for column in inspector.get_columns("messages")}
+    if "runtime_meta_json" in columns:
+        return
+
+    with engine.begin() as connection:
+        connection.execute(text("ALTER TABLE messages ADD COLUMN runtime_meta_json TEXT DEFAULT '{}'"))
+        connection.execute(
+            text(
+                """
+                UPDATE messages
+                SET runtime_meta_json = '{}'
+                WHERE runtime_meta_json IS NULL OR runtime_meta_json = ''
                 """
             )
         )
