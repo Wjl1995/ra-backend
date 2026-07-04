@@ -1,14 +1,52 @@
 # ra-backend
 
-Backend service for ReActAgent online deployment.
+Backend service for the ReActAgent mini program.
 
-## Current Scope
+## Overview
 
-The repository contains:
+`ra-backend` is the Python backend for a document-centric AI assistant. It provides:
 
-- the original ReAct agent, memory, and knowledge modules
-- a FastAPI backend scaffold under `apps/backend/`
-- deployment files for Docker Compose and Caddy
+- WeChat mini program authentication
+- user profile and quota APIs
+- chat sessions and message persistence
+- document upload, parsing, and search
+- retrieval-augmented chat over user documents
+- local MCP servers for knowledge, memory, and utility tools
+
+The online service is implemented with FastAPI under `apps/backend/`. The repository also keeps the original local agent, knowledge, memory, and tool modules that support the online runtime.
+
+## Repository Layout
+
+- `apps/backend/`: FastAPI app, API routes, services, schemas, auth, database, and agent runtime
+- `knowledge/`: document processing, parsers, chunking, and knowledge store logic
+- `memory/`: user memory helpers used by the agent stack
+- `mcp_servers/`: local stdio MCP servers for knowledge, memory, and utility capabilities
+- `scripts/`: smoke tests and verification helpers
+- `docs/`: architecture notes and implementation documents
+- `data/`: runtime data directory for SQLite, uploads, and vector store persistence
+
+## Main API Surface
+
+Base path: `/api/v1`
+
+- `POST /auth/wx-login`
+- `GET /me/profile`
+- `PUT /me/profile`
+- `GET /chat/sessions`
+- `POST /chat/sessions`
+- `GET /chat/sessions/{id}/messages`
+- `POST /chat/sessions/{id}/messages`
+- `GET /documents`
+- `GET /documents/{id}`
+- `POST /documents`
+- `GET /search`
+- `GET /suggestions`
+
+Health check:
+
+```bash
+curl http://127.0.0.1:8000/health
+```
 
 ## Local Development
 
@@ -18,170 +56,97 @@ Install dependencies:
 pip install -r requirements.txt
 ```
 
-Debug helpers for memory / knowledge stores:
-
-```bash
-python scripts/debug_memory.py --help
-python scripts/debug_knowledge.py --help
-```
-
-Run the backend scaffold:
+Run the backend:
 
 ```bash
 uvicorn apps.backend.main:app --reload
 ```
 
-Health check:
+Useful verification commands:
 
 ```bash
-curl http://127.0.0.1:8000/health
+python scripts/verify_chat_api.py
+python scripts/verify_rag_api.py
+python scripts/verify_document_summary.py
+python scripts/verify_document_isolation.py
+python scripts/verify_phase3_chat_runtime.py
 ```
 
-## API Coverage
-
-Current scaffold routes:
-
-- `POST /api/v1/auth/wx-login`
-- `GET /api/v1/me/profile`
-- `PUT /api/v1/me/profile`
-- `GET /api/v1/chat/sessions`
-- `POST /api/v1/chat/sessions`
-- `GET /api/v1/chat/sessions/{id}/messages`
-- `POST /api/v1/chat/sessions/{id}/messages`
-- `GET /api/v1/documents`
-- `GET /api/v1/documents/{id}`
-- `POST /api/v1/documents`
-- `GET /api/v1/search`
-- `GET /api/v1/suggestions`
-
-## Deployment Files
-
-- `Dockerfile`
-- `docker-compose.yml`
-- `Caddyfile`
-- `.env.example`
-- `.dockerignore`
-
-## Server Deployment
-
-1. Clone the repo on the server:
+Debug local knowledge and memory behavior:
 
 ```bash
-git clone https://github.com/Wjl1995/ra-backend.git
-cd ra-backend
+python scripts/debug_knowledge.py --help
+python scripts/debug_memory.py --help
 ```
 
-2. Prepare environment variables:
+## Configuration
+
+Copy the example environment file:
 
 ```bash
 cp .env.example .env
 ```
 
-3. Edit `.env` and fill at least:
+Common variables:
 
-- `KIMI_API_KEY`
-- `JWT_SECRET`
-- `WECHAT_LOGIN_MODE=wechat`
-- `WECHAT_APP_ID`
-- `WECHAT_APP_SECRET`
+- `KIMI_API_KEY`: LLM API key
+- `KIMI_BASE_URL`: LLM endpoint base URL
+- `KIMI_MODEL`: model name
+- `DATABASE_URL`: database connection string
+- `UPLOAD_DIR`: uploaded document directory
+- `CHROMA_PERSIST_DIR`: vector store persistence directory
+- `JWT_SECRET`: JWT signing secret
+- `WECHAT_LOGIN_MODE`: `mock` or `wechat`
+- `WECHAT_APP_ID`: mini program app id
+- `WECHAT_APP_SECRET`: mini program app secret
+- `AGENT_TOOL_MODE`: `local` or `mcp`
 
-4. Update `Caddyfile` with your real API domain.
+For local smoke tests, `WECHAT_LOGIN_MODE=mock` is the simplest setup. For real mini program login, use `WECHAT_LOGIN_MODE=wechat` and fill the WeChat credentials.
 
-5. Build and run:
+## MCP and Agent Runtime
+
+The backend can execute tools in two modes:
+
+- `AGENT_TOOL_MODE=local`: uses the in-process tool registry
+- `AGENT_TOOL_MODE=mcp`: uses local stdio MCP servers
+
+Available MCP server groups:
+
+- `knowledge_server`
+- `memory_server`
+- `utility_server`
+
+The online chat path uses the shared agent runtime in `apps/backend/agent_runtime/`. That runtime supports:
+
+- tool calls
+- prompt templates
+- resource references
+- per-user and per-document context isolation
+- trace metadata attached to assistant messages
+
+## Deployment
+
+Container deployment files are included:
+
+- `Dockerfile`
+- `docker-compose.yml`
+- `Caddyfile`
+
+Typical deployment flow:
 
 ```bash
+git clone <repo-url>
+cd ra-backend
+cp .env.example .env
 docker compose up -d --build
 ```
 
-6. Check status:
+Notes:
 
-```bash
-docker compose ps
-docker compose logs -f app
-docker compose logs -f caddy
-```
+- the app service listens on `127.0.0.1:8000` in Compose
+- Caddy is expected to terminate public traffic on ports `80` and `443`
+- persistent runtime data is stored under `./data/`
 
-## Notes
+## Related Repository
 
-- `docker-compose.yml` binds the app service to `127.0.0.1:8000` and expects Caddy to terminate public HTTP/HTTPS traffic.
-- Persistent data is stored in `./data/`.
-- The backend supports two auth modes:
-  - `WECHAT_LOGIN_MODE=mock` for local/service smoke tests
-  - `WECHAT_LOGIN_MODE=wechat` for real mini program `wx.login -> code2session -> openid -> JWT`
-
-## MCP Phase 1
-
-The repository now includes local stdio MCP server wrappers under `mcp_servers/`:
-
-- `memory_server`
-- `knowledge_server`
-- `utility_server`
-
-Current `utility_server` tools include low-risk helpers such as:
-
-- `calculator`
-- `get_current_time`
-- `json_format`
-- `write_markdown_file` (safe export mode; writes only to `data/user_exports/{user_id}/`)
-
-They currently target Phase 1 wrapping of existing tools and can be inspected locally with:
-
-```bash
-python scripts/inspect_mcp_server.py utility tools/list
-python scripts/inspect_mcp_server.py knowledge resources/list
-```
-
-Each server can also be started as a stdio process:
-
-```bash
-python -m mcp_servers.utility_server.server
-python -m mcp_servers.memory_server.server
-python -m mcp_servers.knowledge_server.server
-```
-
-## MCP Phase 2
-
-The CLI `ReActAgent` can now opt into the local MCP tool runtime:
-
-```bash
-set AGENT_TOOL_MODE=mcp
-python scripts/verify_mcp_phase2.py
-python main.py "2+3*4 等于多少"
-```
-
-Behavior notes:
-
-- `AGENT_TOOL_MODE=local` remains the default and keeps the previous direct `ToolRegistry` execution path.
-- `AGENT_TOOL_MODE=mcp` starts the local stdio servers with `sys.executable -m mcp_servers...`.
-- `MCP_SERVER_CONFIG_JSON` can override the default stdio server registry if you need custom commands or timeouts.
-- Full Phase 2 MCP mode assumes the repo dependencies are installed, including packages needed by `memory` / `knowledge` / `openai`.
-- For full aggregate verification, run `python scripts/verify_mcp_aggregate.py`.
-
-## MCP Phase 3
-
-The online chat path now runs on the shared agent runtime:
-
-```bash
-set AGENT_TOOL_MODE=mcp
-python scripts/verify_phase3_chat_runtime.py
-```
-
-Behavior notes:
-
-- `chat_service` now routes through `AgentOrchestrator` by default.
-- The backend passes `user_id`, `session_id`, and `document_id` into MCP tool calls to preserve user-level document isolation.
-- `AGENT_TOOL_MODE=mcp` is the recommended online setting so the chat path uses the MCP servers instead of the local in-process registry.
-
-## MCP Phase 4
-
-Phase 4 focuses on resources and prompts:
-
-- `knowledge://document/{document_id}`
-- `knowledge://document/{document_id}/outline`
-- `memory://user/{user_id}/recent`
-- `document_summary`
-- `knowledge_qa`
-- `rule_audit`
-- `case_reference`
-
-The server and client routing now support template-style resource URIs.
+The corresponding WeChat mini program frontend lives in `ra-miniapp`.
