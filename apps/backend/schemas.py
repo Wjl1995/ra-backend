@@ -17,10 +17,17 @@ class UserSchema(BaseModel):
     nickname: str
     avatar: str
     quota: QuotaSchema
+    username: str = ""
+    account_bound: bool = False
 
 
 class LoginRequest(BaseModel):
     code: str = Field(min_length=1)
+
+
+class PasswordAuthRequest(BaseModel):
+    username: str = Field(min_length=3, max_length=64)
+    password: str = Field(min_length=6, max_length=128)
 
 
 class LoginResponse(BaseModel):

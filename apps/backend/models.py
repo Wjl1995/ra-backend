@@ -13,6 +13,8 @@ class User(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     openid: Mapped[str] = mapped_column(String(128), unique=True, index=True)
+    username: Mapped[str | None] = mapped_column(String(64), unique=True, index=True, nullable=True)
+    password_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
     nickname: Mapped[str] = mapped_column(String(64), default="")
     avatar: Mapped[str] = mapped_column(String(255), default="")
     daily_quota: Mapped[int] = mapped_column(Integer, default=50)

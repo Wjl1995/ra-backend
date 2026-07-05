@@ -57,6 +57,9 @@ def ensure_runtime_schema() -> None:
     if "messages" in table_names:
         _ensure_messages_runtime_meta(inspector)
 
+    if "users" in table_names:
+        _ensure_users_password_auth(inspector)
+
 
 def _ensure_documents_user_id(inspector) -> None:
     columns = {column["name"] for column in inspector.get_columns("documents")}
@@ -96,6 +99,19 @@ def _ensure_messages_runtime_meta(inspector) -> None:
                 WHERE runtime_meta_json IS NULL OR runtime_meta_json = ''
                 """
             )
+        )
+
+
+def _ensure_users_password_auth(inspector) -> None:
+    columns = {column["name"] for column in inspector.get_columns("users")}
+
+    with engine.begin() as connection:
+        if "username" not in columns:
+            connection.execute(text("ALTER TABLE users ADD COLUMN username VARCHAR(64)"))
+        if "password_hash" not in columns:
+            connection.execute(text("ALTER TABLE users ADD COLUMN password_hash VARCHAR(255)"))
+        connection.execute(
+            text("CREATE UNIQUE INDEX IF NOT EXISTS ix_users_username ON users (username)")
         )
 
 
