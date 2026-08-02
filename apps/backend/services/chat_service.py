@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from datetime import datetime
 from typing import Any
 
+from fastapi import BackgroundTasks
 from openai import OpenAI
 from sqlalchemy.orm import Session
 
@@ -18,11 +20,16 @@ from apps.backend.agent_runtime import (
 from apps.backend.config import settings
 from apps.backend.models import ChatSession, Message, User
 from apps.backend.mcp import MCPClientManager, build_default_stdio_registry, load_registry_from_json
-from apps.backend.schemas import MessageSchema, RefSchema, SessionSchema
+from apps.backend.schemas import Citation, MessageSchema, RefSchema, SessionSchema
 from apps.backend.services import search_service
+from apps.backend.services.web_search_service import ingest_web_pages, run_web_search
+from apps.backend.web.need_detector import WebNeedDetector
 from knowledge import KnowledgeStore
 from memory import AgentMemory
 from tools import ToolRegistry
+
+
+_detector = WebNeedDetector()
 
 SUMMARY_HINT_KEYWORDS = (
     "总结",
@@ -80,7 +87,7 @@ def list_messages(db: Session, session_id: int, user: User) -> list[MessageSchem
     )
     result = []
     for message in messages:
-        refs = [RefSchema(**item) for item in _load_json_list(message.refs_json, fallback=[])]
+        refs = [Citation(**item) for item in _load_json_list(message.refs_json, fallback=[])]
         runtime_meta = _load_runtime_meta(message.runtime_meta_json)
         result.append(
             MessageSchema(
@@ -97,9 +104,24 @@ def list_messages(db: Session, session_id: int, user: User) -> list[MessageSchem
     return result
 
 
-def create_user_message(db: Session, session_id: int, user: User, content: str) -> Message:
+def create_user_message(
+    db: Session,
+    session_id: int,
+    user: User,
+    content: str,
+    *,
+    web_mode: str = "auto",
+    knowledge_mode: str = "auto",
+) -> Message:
     session = _get_session(db, session_id, user)
-    message = Message(session_id=session.id, role="user", content=content, refs_json="[]")
+    message = Message(
+        session_id=session.id,
+        role="user",
+        content=content,
+        refs_json="[]",
+        web_mode=web_mode,
+        knowledge_mode=knowledge_mode,
+    )
     session.updated_at = datetime.utcnow()
     db.add(message)
     db.commit()
@@ -117,6 +139,9 @@ def create_assistant_message(
     tool_traces: list[dict[str, Any]] | None = None,
     resource_refs: list[dict[str, Any]] | None = None,
     metadata: dict[str, Any] | None = None,
+    web_mode: str = "auto",
+    knowledge_mode: str = "auto",
+    web_search_run_id: int | None = None,
 ) -> MessageSchema:
     session = _get_session(db, session_id, user)
     raw_refs = json.dumps(refs, ensure_ascii=False)
@@ -131,6 +156,9 @@ def create_assistant_message(
         content=content,
         refs_json=raw_refs,
         runtime_meta_json=json.dumps(runtime_meta, ensure_ascii=False),
+        web_mode=web_mode,
+        knowledge_mode=knowledge_mode,
+        web_search_run_id=web_search_run_id,
     )
     session.updated_at = datetime.utcnow()
     db.add(message)
@@ -140,7 +168,7 @@ def create_assistant_message(
         id=message.id,
         role=message.role,
         content=message.content,
-        refs=[RefSchema(**item) for item in refs],
+        refs=[Citation(**item) for item in refs],
         tool_traces=runtime_meta["tool_traces"],
         resource_refs=runtime_meta["resource_refs"],
         metadata=runtime_meta["metadata"],
@@ -153,12 +181,44 @@ def build_kimi_answer(
     session_id: int,
     user: User,
     document_id: int | None = None,
+    *,
+    web_mode: str = "auto",
+    knowledge_mode: str = "auto",
+    user_message_id: int | None = None,
+    background_tasks: BackgroundTasks | None = None,
 ) -> AgentTurnResponse:
     _get_session(db, session_id, user)
     if not settings.kimi_api_key:
         raise RuntimeError("Kimi API key is not configured")
     query = _get_latest_user_query(db, session_id)
-    refs = _build_retrieval_refs(db, session_id, user, document_id)
+    local_refs = _build_retrieval_refs(db, session_id, user, document_id)
+
+    # 1) 联网判断（规则，预算内）
+    local_confidence = max((r.get("score", 0.0) for r in local_refs), default=None)
+    explicit_override = True if web_mode == "always" else (False if web_mode == "off" else None)
+    decision = _detector.decide(query, local_confidence=local_confidence, explicit_override=explicit_override)
+
+    # 2) 联网检索（同步预算内完成，失败优雅降级）
+    web_citations: list[dict] = []
+    web_outcome = None
+    mid = user_message_id if user_message_id is not None else _get_latest_user_message_id(db, session_id)
+    if decision.need_web and mid is not None:
+        try:
+            web_outcome = asyncio.run(
+                run_web_search(
+                    user=user,
+                    session_id=session_id,
+                    message_id=mid,
+                    query=query,
+                )
+            )
+            web_citations = web_outcome.citations
+        except Exception:  # noqa: BLE001 - 联网异常不应拖垮回答
+            web_outcome = None
+            web_citations = []
+
+    merged_refs = list(local_refs) + web_citations
+
     history = _build_history_messages(db, session_id)
     request = AgentTurnRequest(
         user_id=user.id,
@@ -167,14 +227,40 @@ def build_kimi_answer(
         document_id=document_id,
         context={
             "history_messages": history,
-            "initial_refs": refs,
+            "initial_refs": merged_refs,
             "document_scope": "single" if document_id is not None else "user",
             "role_scope": "user",
         },
     )
     response = _get_orchestrator().run_chat_turn(request)
     if not response.refs:
-        response.refs = refs
+        response.refs = merged_refs
+
+    # 3) 知识沉淀（异步，不影响回答延迟）
+    run_id = web_outcome.run_id if web_outcome else None
+    if background_tasks is not None and web_outcome is not None and web_outcome.pages:
+        background_tasks.add_task(
+            ingest_web_pages,
+            user=user,
+            session_id=session_id,
+            message_id=mid,
+            run_id=run_id,
+            pages=web_outcome.pages,
+            knowledge_mode=knowledge_mode,
+        )
+
+    # 轻量 web 信息挂到 metadata（不含大正文，避免返回给客户端）
+    response.metadata = {
+        **(response.metadata or {}),
+        "web_search": {
+            "need_web": decision.need_web,
+            "reason": decision.reason,
+            "run_id": run_id,
+            "status": web_outcome.status if web_outcome else None,
+            "citation_count": len(web_citations),
+            "provider": web_outcome.provider if web_outcome else None,
+        },
+    }
     return response
 
 
@@ -305,6 +391,16 @@ def _get_latest_user_query(db: Session, session_id: int) -> str:
         .first()
     )
     return message.content if message else ""
+
+
+def _get_latest_user_message_id(db: Session, session_id: int) -> int | None:
+    message = (
+        db.query(Message.id)
+        .filter(Message.session_id == session_id, Message.role == "user")
+        .order_by(Message.created_at.desc(), Message.id.desc())
+        .first()
+    )
+    return message[0] if message else None
 
 
 def _is_summary_request(query: str) -> bool:

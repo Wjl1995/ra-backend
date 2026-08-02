@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from apps.backend.content_security import is_safe_text
@@ -51,6 +51,7 @@ def list_messages(
 def send_message(
     session_id: int,
     payload: MessageCreateRequest,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -58,8 +59,25 @@ def send_message(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unsafe content")
 
     try:
-        chat_service.create_user_message(db, session_id, current_user, payload.content)
-        response = chat_service.build_kimi_answer(db, session_id, current_user, payload.document_id)
+        user_msg = chat_service.create_user_message(
+            db,
+            session_id,
+            current_user,
+            payload.content,
+            web_mode=payload.web_mode,
+            knowledge_mode=payload.knowledge_mode,
+        )
+        response = chat_service.build_kimi_answer(
+            db,
+            session_id,
+            current_user,
+            payload.document_id,
+            web_mode=payload.web_mode,
+            knowledge_mode=payload.knowledge_mode,
+            user_message_id=user_msg.id,
+            background_tasks=background_tasks,
+        )
+        web_search_run_id = (response.metadata or {}).get("web_search", {}).get("run_id")
         return chat_service.create_assistant_message(
             db,
             session_id,
@@ -69,6 +87,9 @@ def send_message(
             tool_traces=response.tool_traces,
             resource_refs=response.resource_refs,
             metadata=response.metadata,
+            web_mode=payload.web_mode,
+            knowledge_mode=payload.knowledge_mode,
+            web_search_run_id=web_search_run_id,
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc

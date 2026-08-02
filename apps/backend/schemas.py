@@ -58,11 +58,35 @@ class RefSchema(BaseModel):
     score: float
 
 
+class Citation(BaseModel):
+    """统一引用格式（Phase 3）。兼容 RefSchema 字段，扩展 web 来源字段。"""
+
+    citation_id: str = ""
+    ref_type: str = "document"  # web | document | knowledge
+    document_id: int | str | None = None
+    document_version_id: int | None = None
+    title: str = ""
+    url: str = ""
+    source_domain: str = ""
+    snippet: str = ""
+    quote: str = ""
+    score: float = 0.0
+    fetched_at: datetime | None = None
+    language: str = "unknown"
+
+
+class SearchOptions(BaseModel):
+    """联网检索可调参数（可选，缺省走服务端默认）。"""
+
+    max_results: int | None = None
+    max_fetch_pages: int | None = None
+
+
 class MessageSchema(BaseModel):
     id: int
     role: str
     content: str
-    refs: list[RefSchema]
+    refs: list[Citation]
     tool_traces: list[dict[str, Any]] = Field(default_factory=list)
     resource_refs: list[dict[str, Any]] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
@@ -72,6 +96,9 @@ class MessageSchema(BaseModel):
 class MessageCreateRequest(BaseModel):
     content: str = Field(min_length=1)
     document_id: int | None = None
+    web_mode: str = "auto"          # auto | off | always
+    knowledge_mode: str = "auto"    # auto | off | ask | always
+    search_options: SearchOptions | None = None
 
 
 class ThinkingResponse(BaseModel):

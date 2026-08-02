@@ -52,6 +52,28 @@ class Settings:
     retrieval_top_k: int = int(os.getenv("RETRIEVAL_TOP_K", "4"))
     retrieval_chunk_size: int = int(os.getenv("RETRIEVAL_CHUNK_SIZE", "600"))
     retrieval_chunk_overlap: int = int(os.getenv("RETRIEVAL_CHUNK_OVERLAP", "120"))
+
+    # ── 全网知识抓取 / 对话联网 ──────────────────────────────────
+    # 搜索 API
+    web_search_provider: str = os.getenv("WEB_SEARCH_PROVIDER", "tavily")  # tavily | serper
+    web_search_api_key: str = os.getenv("WEB_SEARCH_API_KEY", "")
+    web_search_max_results: int = int(os.getenv("WEB_SEARCH_MAX_RESULTS", "5"))
+    # 抓取
+    crawl_timeout_seconds: float = float(os.getenv("CRAWL_TIMEOUT_SECONDS", "30"))
+    crawl_max_pages: int = int(os.getenv("CRAWL_MAX_PAGES", "10"))
+    crawl_user_agent: str = os.getenv(
+        "CRAWL_USER_AGENT",
+        "Mozilla/5.0 (compatible; ReActAgentBot/1.0; +https://github.com/Wjl1995/ra-backend)",
+    )
+    crawl_max_content_length: int = int(os.getenv("CRAWL_MAX_CONTENT_LENGTH", str(5 * 1024 * 1024)))  # 5MB
+    # robots.txt
+    robots_cache_ttl_seconds: int = int(os.getenv("ROBOTS_CACHE_TTL_SECONDS", "3600"))
+    # 对话联网同步预算
+    web_sync_budget_seconds: float = float(os.getenv("WEB_SYNC_BUDGET_SECONDS", "15"))
+    web_max_fetch_pages: int = int(os.getenv("WEB_MAX_FETCH_PAGES", "3"))
+    # 存储
+    storage_dir: str = str(_resolve_project_path(os.getenv("STORAGE_DIR", "./data/storage")))
+
     cors_origins: tuple[str, ...] = ("*",)
 
 
@@ -61,6 +83,7 @@ settings = Settings()
 def ensure_runtime_directories() -> None:
     Path(settings.upload_dir).mkdir(parents=True, exist_ok=True)
     Path(settings.user_export_dir).mkdir(parents=True, exist_ok=True)
+    Path(settings.storage_dir).mkdir(parents=True, exist_ok=True)
 
     if not settings.database_url.startswith("sqlite:///"):
         return

@@ -1,0 +1,33 @@
+# ============================================================
+# .gitattributes — 统一行尾规范（根治 core.autocrlf 假改动）
+#
+# 规则：仓库内所有文本一律以 LF 存储，所有平台工作区也保持 LF。
+# 这样 Windows(CRLF) 与 Linux 服务器(LF) 之间不再有行尾差异，
+# 以后从服务器拷回代码也不会再产生"仅行尾变化"的假改动。
+# ============================================================
+
+# 默认：所有文本文件按 LF 存储并检出（覆盖 core.autocrlf 的自动转换）
+* text=auto eol=lf
+
+# 显式声明二进制文件，禁止换行符转换，避免被误判为文本而损坏
+*.png    binary
+*.jpg    binary
+*.jpeg   binary
+*.gif    binary
+*.ico    binary
+*.webp   binary
+*.woff   binary
+*.woff2  binary
+*.ttf    binary
+*.eot    binary
+*.pdf    binary
+*.zip    binary
+*.gz     binary
+*.tar    binary
+*.pyc    binary
+*.sqlite binary
+*.sqlite3 binary
+*.db     binary
+
+# 脚本类必须保持 LF（Windows 下执行安全）
+*.sh     text eol=lf

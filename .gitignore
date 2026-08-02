@@ -44,6 +44,9 @@ wheels/
 # Database / Chroma
 chroma_data/
 
+# Runtime data (local SQLite DB + generated storage/uploads — contains user data, do NOT commit)
+data/
+
 # Temporary files
 *.tmp
 *.log
