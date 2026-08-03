@@ -38,16 +38,45 @@ ReActAgent 的后端服务，面向微信小程序和 Web 前端提供账号、�
 
 ## 后端架构
 
-下图展示 ra-backend 的分层结构与一次聊天请求的主链路：
+下图（Mermaid）展示 ra-backend 的分层结构与一次聊天请求的主链路：
 
-![ra-backend 后端架构图](docs/architecture.svg)
+```mermaid
+flowchart TB
+    subgraph L1["① 客户端"]
+        c["微信小程序 · Web 前端"]
+    end
+    subgraph L2["② 接入层"]
+        g["Caddy 反代 / TLS + FastAPI :8000"]
+    end
+    subgraph L3["③ API 路由"]
+        a["auth · me · chat · document · search · suggestions"]
+    end
+    subgraph L4["④ 业务服务层"]
+        s["会话编排 · 文档处理 · 检索 · 联网搜索 · 个人知识库"]
+    end
+    subgraph L5["⑤ Agent Runtime"]
+        r["Orchestrator · ToolProvider · Policy · Trace"]
+    end
+    subgraph L6["⑥ 工具与能力"]
+        t["本地 ToolRegistry / MCP servers<br/>(knowledge · memory · utility)"]
+    end
+    subgraph L7["⑦ 外部依赖"]
+        e["微信登录 · Kimi LLM · Tavily/Serper · 公网网页"]
+    end
+    subgraph L8["⑧ 数据存储"]
+        d["SQLite (SQLAlchemy) · Alembic 迁移"]
+    end
 
-- 客户端（小程序 / Web）经 Caddy 反向代理进入 FastAPI 应用；
-- 路由层按业务域拆为 `auth` / `me` / `chat` / `document` / `search` / `suggestions`；
-- 服务层由 `chat_service` 主链路编排文档、检索、联网搜索（`web_search`）、个人知识库（`personal_kb`）、存储（`storage`）与任务队列（`taskqueue`）；
-- `AgentOrchestrator` 通过 `ToolProvider` 调用本地工具（`ToolRegistry`）或 MCP server（`knowledge` / `memory` / `utility`）；
-- 联网知识子模块 `apps/backend/web/` 负责搜索、抓取、robots 合规、去重与引用整理；
-- 外部依赖包括微信登录、Kimi LLM、Tavily/Serper 与公网网页；数据持久化到 SQLite（`data/` 运行时目录），迁移由 Alembic 管理。
+    c --> g --> a --> s --> r --> t --> e
+    s -.读写.-> d
+    r -.读写.-> d
+```
+
+
+- **层次结构**：客户端 → 接入层（Caddy/FastAPI）→ API 路由 → 业务服务层 → Agent Runtime → 工具与能力 → 外部依赖，数据统一落到 SQLite 存储层；
+- **业务主链路**：一次对话请求从客户端经接入层与 `chat` 路由进入业务服务层，由 `chat_service` 编排后进入 Agent Runtime，经 `Orchestrator`/`ToolProvider` 选择并调用本地工具或 MCP servers，再对接外部 LLM 与搜索；
+- **联网能力**：联网搜索（Tavily/Serper）与公网网页抓取构成联网知识能力，检索结果沉淀为个人知识库；
+- **数据读写**：业务服务层与 Agent Runtime 以虚线读写 SQLite（`data/` 运行时目录），迁移由 Alembic 管理。
 
 ## API 总览
 
