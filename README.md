@@ -36,6 +36,19 @@ ReActAgent 的后端服务，面向微信小程序和 Web 前端提供账号、�
 - `docs/`: 架构设计、知识库导入、MCP 改造和部署方案文档
 - `data/`: 默认运行时数据目录，保存 SQLite、上传文件和向量/导出数据
 
+## 后端架构
+
+下图展示 ra-backend 的分层结构与一次聊天请求的主链路：
+
+![ra-backend 后端架构图](docs/architecture.svg)
+
+- 客户端（小程序 / Web）经 Caddy 反向代理进入 FastAPI 应用；
+- 路由层按业务域拆为 `auth` / `me` / `chat` / `document` / `search` / `suggestions`；
+- 服务层由 `chat_service` 主链路编排文档、检索、联网搜索（`web_search`）、个人知识库（`personal_kb`）、存储（`storage`）与任务队列（`taskqueue`）；
+- `AgentOrchestrator` 通过 `ToolProvider` 调用本地工具（`ToolRegistry`）或 MCP server（`knowledge` / `memory` / `utility`）；
+- 联网知识子模块 `apps/backend/web/` 负责搜索、抓取、robots 合规、去重与引用整理；
+- 外部依赖包括微信登录、Kimi LLM、Tavily/Serper 与公网网页；数据持久化到 SQLite（`data/` 运行时目录），迁移由 Alembic 管理。
+
 ## API 总览
 
 默认 API 前缀：`/api/v1`。
