@@ -42,34 +42,36 @@ ReActAgent 的后端服务，面向微信小程序和 Web 前端提供账号、�
 
 ```mermaid
 flowchart TB
-    subgraph L1["① 客户端"]
-        c["微信小程序 · Web 前端"]
-    end
-    subgraph L2["② 接入层"]
-        g["Caddy 反代 / TLS + FastAPI :8000"]
-    end
-    subgraph L3["③ API 路由"]
-        a["auth · me · chat · document · search · suggestions"]
-    end
-    subgraph L4["④ 业务服务层"]
-        s["会话编排 · 文档处理 · 检索 · 联网搜索 · 个人知识库"]
-    end
-    subgraph L5["⑤ Agent Runtime"]
-        r["Orchestrator · ToolProvider · Policy · Trace"]
-    end
-    subgraph L6["⑥ 工具与能力"]
-        t["本地 ToolRegistry / MCP servers<br/>(knowledge · memory · utility)"]
-    end
-    subgraph L7["⑦ 外部依赖"]
-        e["微信登录 · Kimi LLM · Tavily/Serper · 公网网页"]
-    end
-    subgraph L8["⑧ 数据存储"]
-        d["SQLite (SQLAlchemy) · Alembic 迁移"]
-    end
+    L1["① 客户端<br/>微信小程序 · Web 前端"]
+    L2["② 接入层<br/>Caddy 反代/TLS + FastAPI :8000"]
+    L3["③ API 路由<br/>auth · me · chat · document · search · suggestions"]
+    L4["④ 业务服务层<br/>会话编排 · 文档处理 · 检索 · 联网搜索 · 个人知识库"]
+    L5["⑤ Agent Runtime<br/>Orchestrator · ToolProvider · Policy · Trace"]
+    L6["⑥ 工具与能力<br/>本地 ToolRegistry / MCP servers<br/>(knowledge · memory · utility)"]
+    L7["⑦ 外部依赖<br/>微信登录 · Kimi LLM · Tavily/Serper · 公网网页"]
+    L8["⑧ 数据存储<br/>SQLite (SQLAlchemy) · Alembic 迁移 · data/"]
 
-    c --> g --> a --> s --> r --> t --> e
-    s -.读写.-> d
-    r -.读写.-> d
+    L1 --> L2 --> L3 --> L4 --> L5 --> L6 --> L7
+    L4 -.读写.-> L8
+    L5 -.读写.-> L8
+
+    classDef c1 fill:#E6F1FB,stroke:#185FA5,color:#0C447C;
+    classDef c2 fill:#EAF3DE,stroke:#3B6D11,color:#27500A;
+    classDef c3 fill:#FAEEDA,stroke:#854F0B,color:#633806;
+    classDef c4 fill:#EEEDFE,stroke:#534AB7,color:#3C3489;
+    classDef c5 fill:#FBEAF0,stroke:#993556,color:#72243E;
+    classDef c6 fill:#E1F5EE,stroke:#0F6E56,color:#085041;
+    classDef c7 fill:#FAECE7,stroke:#993C1D,color:#712B13;
+    classDef c8 fill:#F1EFE8,stroke:#5F5E5A,color:#444441;
+
+    class L1 c1;
+    class L2 c2;
+    class L3 c3;
+    class L4 c4;
+    class L5 c5;
+    class L6 c6;
+    class L7 c7;
+    class L8 c8;
 ```
 
 

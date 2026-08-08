@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import hashlib
+from datetime import datetime
 from typing import Any
 from urllib.parse import urlparse
 
@@ -54,6 +55,6 @@ def build_citation(
         "snippet": snippet,
         "quote": quote,
         "score": round(float(score), 4),
-        "fetched_at": fetched_at,
+        "fetched_at": fetched_at.isoformat() if isinstance(fetched_at, datetime) else fetched_at,
         "language": language,
     }

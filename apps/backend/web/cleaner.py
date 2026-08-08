@@ -141,6 +141,9 @@ def _remove_noise(soup: BeautifulSoup) -> None:
 
     # 移除 class/id 匹配噪声模式的元素
     for element in soup.find_all(True):
+        # 防御：decompose 过程中可能残留非 Tag 节点（如 None），避免 .get 崩溃
+        if not isinstance(element, Tag):
+            continue
         class_list = element.get("class", [])
         if isinstance(class_list, str):
             class_list = class_list.split()

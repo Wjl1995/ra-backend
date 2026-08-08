@@ -10,6 +10,7 @@ from apps.backend.api.document import router as document_router
 from apps.backend.api.me import router as me_router
 from apps.backend.api.search import router as search_router
 from apps.backend.api.suggestions import router as suggestions_router
+from apps.backend.api.web_search import router as web_search_router
 from apps.backend.config import settings
 from apps.backend.database import Base, engine
 from sqlalchemy import inspect, text
@@ -33,6 +34,7 @@ def create_app() -> FastAPI:
     app.include_router(document_router, prefix=api_prefix)
     app.include_router(search_router, prefix=api_prefix)
     app.include_router(suggestions_router, prefix=api_prefix)
+    app.include_router(web_search_router, prefix=api_prefix)
     register_admin_routes(app)
 
     @app.on_event("startup")

@@ -131,52 +131,85 @@ async def run_web_search(
                 dedup = DedupStore()
 
                 for rank, r in enumerate(top, start=1):
-                    res = await adapter.fetch(r.url)
-                    if res.error:
-                        continue
-                    try:
-                        html = res.content.decode("utf-8", errors="replace")
-                    except Exception:
-                        continue
-                    np = normalize_html(html, base_url=res.final_url)
-                    if not np.is_quality_pass():
-                        continue
-                    dup = dedup.check_and_add(url=res.final_url, text=np.text)
-                    if dup.is_duplicate:
-                        continue
-
-                    cid = _cid(res.final_url)
                     fetched_at = datetime.utcnow()
-                    page = FetchedPage(
-                        citation_id=cid,
-                        title=np.title or r.title,
-                        url=r.url,
-                        final_url=res.final_url,
-                        source_domain=domain_of(res.final_url),
-                        markdown=np.markdown,
-                        text=np.text,
-                        content_hash=content_hash(np.text),
-                        language=np.language,
-                        quality_score=np.quality_score,
-                        snippet=np.text[:2000],
-                        fetched_at=fetched_at,
-                    )
-                    outcome.pages.append(page)
+                    # 单条抓取/解析失败不应拖垮整次检索
+                    page = None
+                    cid = _cid(r.url)
+                    src_url = r.url
+                    src_title = r.title or r.url
+                    src_domain = domain_of(r.url)
 
-                    outcome.citations.append(
-                        build_citation(
-                            citation_id=cid,
-                            ref_type="web",
-                            title=page.title,
-                            url=page.final_url,
-                            source_domain=page.source_domain,
-                            snippet=page.snippet,
-                            score=r.score,
-                            document_id=f"web:{rank}",
-                            fetched_at=fetched_at,
-                            language=page.language,
+                    try:
+                        res = await adapter.fetch(r.url)
+                        if not res.error:
+                            try:
+                                html = res.content.decode("utf-8", errors="replace")
+                            except Exception:
+                                html = ""
+                            if html:
+                                np = normalize_html(html, base_url=res.final_url)
+                                if np.is_quality_pass():
+                                    final_url = res.final_url or r.url
+                                    dup = dedup.check_and_add(url=final_url, text=np.text)
+                                    if not dup.is_duplicate:
+                                        page = FetchedPage(
+                                            citation_id=_cid(final_url),
+                                            title=np.title or r.title,
+                                            url=r.url,
+                                            final_url=final_url,
+                                            source_domain=domain_of(final_url),
+                                            markdown=np.markdown,
+                                            text=np.text,
+                                            content_hash=content_hash(np.text),
+                                            language=np.language,
+                                            quality_score=np.quality_score,
+                                            snippet=np.text[:2000],
+                                            fetched_at=fetched_at,
+                                        )
+                                        outcome.pages.append(page)
+                    except Exception:  # noqa: BLE001 - 单条失败不影响其余
+                        page = None
+
+                    if page is not None:
+                        # 完整正文路径：用抓取并清洗后的内容
+                        cid = page.citation_id
+                        src_url = page.final_url
+                        src_title = page.title
+                        src_domain = page.source_domain
+                        outcome.citations.append(
+                            build_citation(
+                                citation_id=page.citation_id,
+                                ref_type="web",
+                                title=page.title,
+                                url=page.final_url,
+                                source_domain=page.source_domain,
+                                snippet=page.snippet,
+                                score=r.score,
+                                document_id=f"web:{rank}",
+                                fetched_at=fetched_at,
+                                language=page.language,
+                            )
                         )
-                    )
+                    else:
+                        # 兜底引用：抓取失败 / 质量不过 / 反爬拦截时，
+                        # 仍用搜索结果（Tavily 的 title/url/snippet）生成来源引用，
+                        # 保证只要检索有结果，前端就能展示可点击的来源链接。
+                        outcome.citations.append(
+                            build_citation(
+                                citation_id=cid,
+                                ref_type="web",
+                                title=src_title,
+                                url=src_url,
+                                source_domain=src_domain,
+                                snippet=r.snippet or "",
+                                score=r.score,
+                                document_id=f"web:{rank}",
+                                fetched_at=fetched_at,
+                                language="unknown",
+                            )
+                        )
+
+                    # 无论走哪条路径都落库 ChatTurnSource，保证来源可追溯
                     db.add(
                         models.ChatTurnSource(
                             user_id=user.id,
@@ -185,9 +218,9 @@ async def run_web_search(
                             web_search_run_id=run.id,
                             citation_id=cid,
                             ref_type="web",
-                            url=page.final_url,
-                            title=page.title,
-                            source_domain=page.source_domain,
+                            url=src_url,
+                            title=src_title,
+                            source_domain=src_domain,
                             fetched_at=fetched_at,
                         )
                     )
