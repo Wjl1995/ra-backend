@@ -8,6 +8,7 @@ import uuid
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, REPO_ROOT)
 
+from apps.backend.agent_runtime import MCPToolProvider
 from apps.backend.mcp import MCPClientManager, build_default_stdio_registry
 
 
@@ -88,10 +89,8 @@ def verify_agent_tool_provider() -> dict:
     os.environ["AGENT_TOOL_MODE"] = "mcp"
     os.environ.setdefault("KIMI_API_KEY", "phase2-aggregate-smoke")
 
-    from agent.react_agent import ReActAgent
-
-    agent = ReActAgent(api_key=os.environ["KIMI_API_KEY"])
-    tools = agent.tool_provider.list_tools(context={"query": "列出可用工具"})
+    provider = MCPToolProvider(MCPClientManager(build_default_stdio_registry()))
+    tools = provider.list_tools()
     return {
         "agent_tool_names": sorted(tool.name for tool in tools),
         "tool_count": len(tools),
@@ -129,7 +128,7 @@ def main() -> int:
     if "聚合验证经验" not in manager_result["retrieve_case_result"]:
         raise RuntimeError("retrieve_case did not find the saved experience marker")
     if sorted(agent_result["agent_tool_names"]) != sorted(manager_result["tool_names"]):
-        raise RuntimeError("ReActAgent MCP tool list does not match manager aggregate view")
+        raise RuntimeError("MCPToolProvider tool list does not match manager aggregate view")
 
     import json
 
