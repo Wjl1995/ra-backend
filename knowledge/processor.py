@@ -162,7 +162,7 @@ def extract_keywords(text: str, max_keywords: int = 5) -> list[str]:
     )
 
     # 简单分词：按标点和空格切
-    words = re.split(r'[\s,，。！？；：、""''（）()\[\]{}<>《》/\\|@#$%^&*+=~`]', text)
+    words = re.split(r'[\s,，。！？；：、""\'\'（）()\[\]{}<>《》/\\|@#$%^&*+=~`]', text)
     words = [w for w in words if len(w) >= 2 and w not in stopwords]
 
     # 词频统计
