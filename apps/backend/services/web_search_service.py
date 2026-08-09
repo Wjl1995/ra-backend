@@ -256,7 +256,7 @@ def _cid(url: str) -> str:
     return citation_id_for(url)
 
 
-def ingest_web_pages(
+async def ingest_web_pages(
     *,
     user: "models.User",
     session_id: int,
@@ -282,7 +282,7 @@ def ingest_web_pages(
     for page in pages:
         try:
             # 异步阶段才调用 LLM 整理，避免占用对话同步预算
-            card = asyncio.run(organizer.organize(page.markdown, source_url=page.final_url))
+            card = await organizer.organize(page.markdown, source_url=page.final_url)
             doc = svc.save_web_page(
                 SaveWebPageInput(
                     user_id=user.id,

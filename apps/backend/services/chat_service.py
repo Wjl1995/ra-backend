@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-import asyncio
 import json
 from datetime import datetime
 from typing import Any
+
+from starlette.concurrency import run_in_threadpool
 
 from fastapi import BackgroundTasks
 from openai import OpenAI
@@ -176,7 +177,7 @@ def create_assistant_message(
     )
 
 
-def build_kimi_answer(
+async def build_kimi_answer(
     db: Session,
     session_id: int,
     user: User,
@@ -204,13 +205,11 @@ def build_kimi_answer(
     mid = user_message_id if user_message_id is not None else _get_latest_user_message_id(db, session_id)
     if decision.need_web and mid is not None:
         try:
-            web_outcome = asyncio.run(
-                run_web_search(
-                    user=user,
-                    session_id=session_id,
-                    message_id=mid,
-                    query=query,
-                )
+            web_outcome = await run_web_search(
+                user=user,
+                session_id=session_id,
+                message_id=mid,
+                query=query,
             )
             web_citations = web_outcome.citations
         except Exception:  # noqa: BLE001 - 联网异常不应拖垮回答
@@ -232,7 +231,7 @@ def build_kimi_answer(
             "role_scope": "user",
         },
     )
-    response = _get_orchestrator().run_chat_turn(request)
+    response = await run_in_threadpool(_get_orchestrator().run_chat_turn, request)
     if not response.refs:
         response.refs = merged_refs
 

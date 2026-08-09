@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import time
 import uuid
-from collections.abc import Callable
 from typing import Any
 
 from openai import OpenAI
@@ -53,8 +52,9 @@ class AgentOrchestrator:
         temperature: float = 1.0,
         system_prompt: str = DEFAULT_SYSTEM_PROMPT,
         policy: AgentRuntimePolicy | None = None,
-        legacy_runner: Callable[[AgentTurnRequest], AgentTurnResponse | dict[str, Any]] | None = None,
     ):
+        if llm_client is None or model is None:
+            raise ValueError("AgentOrchestrator requires both llm_client and model")
         self.tool_provider = tool_provider
         self.llm_client = llm_client
         self.model = model
@@ -62,7 +62,6 @@ class AgentOrchestrator:
         self.temperature = temperature
         self.system_prompt = system_prompt
         self.policy = policy or AgentRuntimePolicy()
-        self.legacy_runner = legacy_runner
 
     def build_context(self, request: AgentTurnRequest) -> dict[str, Any]:
         context = {
@@ -79,11 +78,6 @@ class AgentOrchestrator:
         return self.policy.filter_tools(tools)
 
     def run_chat_turn(self, request: AgentTurnRequest) -> AgentTurnResponse:
-        if self.llm_client is None or self.model is None:
-            if self.legacy_runner is None:
-                raise RuntimeError("AgentOrchestrator is missing llm_client/model and no legacy_runner is configured")
-            return self._run_legacy(request)
-
         context = self.build_context(request)
         trace = AgentTrace()
         available_tools = self.list_available_tools(request)
@@ -115,8 +109,6 @@ class AgentOrchestrator:
 
             if not tool_calls:
                 answer = assistant_content.strip()
-                if not answer and self.legacy_runner is not None:
-                    return self._run_legacy(request)
                 if not answer:
                     raise RuntimeError("Agent runtime returned an empty response")
                 return AgentTurnResponse(
@@ -165,20 +157,6 @@ class AgentOrchestrator:
                 )
 
         raise RuntimeError("Agent runtime exceeded max tool-call iterations")
-
-    def _run_legacy(self, request: AgentTurnRequest) -> AgentTurnResponse:
-        if self.legacy_runner is None:
-            raise RuntimeError("legacy_runner is not configured")
-        payload = self.legacy_runner(request)
-        if isinstance(payload, AgentTurnResponse):
-            return payload
-        return AgentTurnResponse(
-            answer=str(payload.get("answer", "")),
-            refs=list(payload.get("refs", [])),
-            tool_traces=list(payload.get("tool_traces", [])),
-            resource_refs=list(payload.get("resource_refs", [])),
-            metadata=dict(payload.get("metadata", {})),
-        )
 
     def _build_messages(
         self,

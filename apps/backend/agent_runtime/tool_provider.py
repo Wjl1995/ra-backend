@@ -86,13 +86,21 @@ class LocalToolProvider(ToolProvider):
             )
 
         kwargs = self._coerce_arguments(tool.parameters, arguments)
-        result = tool.run(**kwargs)
-        is_error = result.startswith("[工具执行错误]") or result.startswith("错误:")
+        try:
+            result = tool.run(**kwargs)
+        except Exception as exc:  # noqa: BLE001 - 工具执行异常统一在 provider 层捕获
+            return ToolCallResult(
+                tool_name=tool_name,
+                server_name="local",
+                content=f"工具 '{tool_name}' 执行出错: {type(exc).__name__}: {exc}",
+                is_error=True,
+                metadata={"arguments": kwargs},
+            )
         return ToolCallResult(
             tool_name=tool_name,
             server_name="local",
             content=result,
-            is_error=is_error,
+            is_error=False,
             raw=result,
             metadata={"arguments": kwargs},
         )
@@ -156,7 +164,7 @@ class MCPToolProvider(ToolProvider):
             return ToolCallResult(
                 tool_name=tool_name,
                 server_name=self.default_server,
-                content=f"[MCP工具执行错误] {type(exc).__name__}: {exc}",
+                content=f"MCP 工具 '{tool_name}' 执行出错: {type(exc).__name__}: {exc}",
                 is_error=True,
                 raw=exc,
             )

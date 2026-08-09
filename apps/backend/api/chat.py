@@ -48,7 +48,7 @@ def list_messages(
 
 
 @router.post("/sessions/{session_id}/messages", response_model=MessageSchema)
-def send_message(
+async def send_message(
     session_id: int,
     payload: MessageCreateRequest,
     background_tasks: BackgroundTasks,
@@ -67,7 +67,7 @@ def send_message(
             web_mode=payload.web_mode,
             knowledge_mode=payload.knowledge_mode,
         )
-        response = chat_service.build_kimi_answer(
+        response = await chat_service.build_kimi_answer(
             db,
             session_id,
             current_user,

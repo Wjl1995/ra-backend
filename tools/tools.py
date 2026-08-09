@@ -30,11 +30,9 @@ class Tool:
         self.func = func
 
     def run(self, **kwargs) -> str:
-        try:
-            result = self.func(**kwargs)
-            return str(result)
-        except Exception as e:
-            return f"[工具执行错误] {type(e).__name__}: {e}"
+        # 异常统一由 ToolProvider.call_tool 捕获并转为结构化的 ToolCallResult，
+        # 这里只负责把函数返回值变成字符串，不吞异常、不加错误前缀。
+        return str(self.func(**kwargs))
 
     def to_schema(self) -> dict:
         """返回 OpenAI function calling 格式的工具描述"""

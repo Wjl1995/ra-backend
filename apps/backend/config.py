@@ -4,6 +4,10 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
@@ -49,6 +53,12 @@ class Settings:
     agent_tool_mode: str = os.getenv("AGENT_TOOL_MODE", "mcp").lower()
     mcp_server_config_json: str = os.getenv("MCP_SERVER_CONFIG_JSON", "")
     agent_max_tool_calls: int = int(os.getenv("AGENT_MAX_TOOL_CALLS", "4"))
+    # ── 记忆 / Embedding（原为顶层 config.py 常量，统一到此处作为唯一可信源）──
+    chroma_persist_dir: str = os.getenv("CHROMA_PERSIST_DIR", "./chroma_data")
+    short_term_memory_max_turns: int = int(os.getenv("SHORT_TERM_MEMORY_MAX_TURNS", "10"))
+    long_term_memory_top_k: int = int(os.getenv("LONG_TERM_MEMORY_TOP_K", "5"))
+    llm_temperature: float = float(os.getenv("LLM_TEMPERATURE", "1.0"))
+    max_iterations: int = int(os.getenv("MAX_ITERATIONS", "10"))
     retrieval_top_k: int = int(os.getenv("RETRIEVAL_TOP_K", "4"))
     retrieval_chunk_size: int = int(os.getenv("RETRIEVAL_CHUNK_SIZE", "600"))
     retrieval_chunk_overlap: int = int(os.getenv("RETRIEVAL_CHUNK_OVERLAP", "120"))

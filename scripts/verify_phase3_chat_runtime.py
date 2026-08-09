@@ -206,17 +206,17 @@ def prepare_database() -> dict[str, int]:
         }
 
 
-def run_chat_case(session_id: int, user_id: int, content: str, document_id: int | None = None) -> tuple[str, list[dict]]:
+async def run_chat_case(session_id: int, user_id: int, content: str, document_id: int | None = None) -> tuple[str, list[dict]]:
     with SessionLocal() as db:
         user = db.query(User).filter(User.id == user_id).first()
         if user is None:
             raise RuntimeError("verification user not found")
         chat_service.create_user_message(db, session_id, user, content)
-        response = chat_service.build_kimi_answer(db, session_id, user, document_id=document_id)
+        response = await chat_service.build_kimi_answer(db, session_id, user, document_id=document_id)
         return response.answer, response.refs
 
 
-def main() -> int:
+async def main() -> int:
     try:
         ids = prepare_database()
         chat_service._client = FakeOpenAIClient()
@@ -260,11 +260,11 @@ def main() -> int:
     finally:
         orchestrator = chat_service._orchestrator
         if orchestrator is not None and isinstance(orchestrator.tool_provider, MCPToolProvider):
-            asyncio.run(orchestrator.tool_provider.client_manager.stop())
+            await orchestrator.tool_provider.client_manager.stop()
         if hasattr(engine, "dispose"):
             engine.dispose()
         shutil.rmtree(temp_root, ignore_errors=True)
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(asyncio.run(main()))

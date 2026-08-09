@@ -1,24 +1,22 @@
 """
-ReAct Agent 配置文件
+配置模块 —— 向后兼容 shim。
+
+规范配置已统一到 apps.backend.config.Settings（单一可信源）。
+本模块只重新导出 memory/ 与 knowledge/ 等辅助模块仍 import 的旧模块级常量，
+避免仓库里存在两套默认值互相打架。不要再在本文件新增配置项。
 """
-import os
-from dotenv import load_dotenv
+from apps.backend.config import settings
 
-load_dotenv()
+LLM_API_KEY = settings.kimi_api_key
+LLM_BASE_URL = settings.kimi_base_url
+LLM_MODEL = settings.kimi_model
+LLM_MAX_TOKENS = settings.kimi_max_tokens
+LLM_TEMPERATURE = settings.llm_temperature
 
-# ── LLM 配置 ──────────────────────────────────────────────
-LLM_API_KEY = os.getenv("KIMI_API_KEY", "")
-LLM_BASE_URL = os.getenv("KIMI_BASE_URL", "https://api.moonshot.cn/v1")
-LLM_MODEL = os.getenv("KIMI_MODEL", "moonshot-v1-8k")
-LLM_MAX_TOKENS = 2048
-LLM_TEMPERATURE = 1.0  # Kimi 模型要求 temperature 必须为 1
+CHROMA_PERSIST_DIR = settings.chroma_persist_dir
+SHORT_TERM_MEMORY_MAX_TURNS = settings.short_term_memory_max_turns
+LONG_TERM_MEMORY_TOP_K = settings.long_term_memory_top_k
 
-# ── Memory 配置 ───────────────────────────────────────────
-CHROMA_PERSIST_DIR = os.getenv("CHROMA_PERSIST_DIR", "./chroma_data")
-SHORT_TERM_MEMORY_MAX_TURNS = 10   # 短期记忆保留最近 N 轮对话
-LONG_TERM_MEMORY_TOP_K = 5         # 长期记忆检索返回 Top K 条
-
-# ── ReAct Agent 配置 ──────────────────────────────────────
-MAX_ITERATIONS = 10                  # 最大推理-行动轮次
-AGENT_TOOL_MODE = os.getenv("AGENT_TOOL_MODE", "local").lower()
-MCP_SERVER_CONFIG_JSON = os.getenv("MCP_SERVER_CONFIG_JSON", "")
+MAX_ITERATIONS = settings.max_iterations
+AGENT_TOOL_MODE = settings.agent_tool_mode
+MCP_SERVER_CONFIG_JSON = settings.mcp_server_config_json
