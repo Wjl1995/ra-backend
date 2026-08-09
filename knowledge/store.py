@@ -43,6 +43,7 @@ class KnowledgeChunk:
         keywords: Optional[list[str]] = None,
         tags: Optional[list[str]] = None,
         priority: int = 5,
+        user_id: str = "global",
         metadata: Optional[dict] = None,
     ):
         self.chunk_id = chunk_id or str(uuid.uuid4())
@@ -56,6 +57,8 @@ class KnowledgeChunk:
         self.keywords = keywords or []
         self.tags = tags or []
         self.priority = priority
+        # user_id 用于检索隔离：真实用户 id 为私有，'global' 为全用户共享
+        self.user_id = str(user_id)
         self._extra_meta = metadata or {}
 
     def to_chroma_meta(self) -> dict:
@@ -69,6 +72,7 @@ class KnowledgeChunk:
             "keywords": json.dumps(self.keywords, ensure_ascii=False),
             "tags": json.dumps(self.tags, ensure_ascii=False),
             "priority": self.priority,
+            "user_id": self.user_id,
             "ingested_at": datetime.now().isoformat(),
         }
         meta.update(self._extra_meta)
@@ -144,6 +148,7 @@ class KnowledgeStore:
         doc_type: Optional[str] = None,
         domain: Optional[str] = None,
         tags: Optional[list[str]] = None,
+        user: Optional[int] = None,
         top_k: int = LONG_TERM_MEMORY_TOP_K,
     ) -> list[dict]:
         """
@@ -154,6 +159,8 @@ class KnowledgeStore:
             doc_type: 限定文档类型 (knowledge/rule/case)，None 则搜索全部
             domain: 限定领域
             tags: 限定标签
+            user: 限定用户（检索隔离）。命中条件：user_id == user 或 user_id == 'global'
+                  （全局共享知识）。传 None 则不过滤（保留旧行为，仅用于内部/脚本）。
             top_k: 返回条数
         """
         results = []
@@ -178,6 +185,9 @@ class KnowledgeStore:
                 conditions.append({"domain": domain})
             if tags:
                 conditions.append({"tags": {"$contains": json.dumps(tags, ensure_ascii=False)}})
+            # 检索隔离：仅召回「该用户私有」或「全局共享」的片段
+            if user is not None:
+                conditions.append({"user_id": {"$in": [str(user), "global"]}})
             # ChromaDB 支持的过滤方式有限，简化处理
             # 对于 tags 的精确匹配，我们在结果中做后过滤
 
@@ -222,17 +232,17 @@ class KnowledgeStore:
         results.sort(key=lambda x: x["score"], reverse=True)
         return results[:top_k]
 
-    def search_knowledge(self, query: str, domain: str = None, top_k: int = 5) -> list[dict]:
+    def search_knowledge(self, query: str, domain: str = None, top_k: int = 5, user: Optional[int] = None) -> list[dict]:
         """搜索通用知识"""
-        return self.search(query, doc_type="knowledge", domain=domain, top_k=top_k)
+        return self.search(query, doc_type="knowledge", domain=domain, top_k=top_k, user=user)
 
-    def search_rules(self, query: str, domain: str = None, top_k: int = 5) -> list[dict]:
+    def search_rules(self, query: str, domain: str = None, top_k: int = 5, user: Optional[int] = None) -> list[dict]:
         """搜索规则"""
-        return self.search(query, doc_type="rule", domain=domain, top_k=top_k)
+        return self.search(query, doc_type="rule", domain=domain, top_k=top_k, user=user)
 
-    def search_cases(self, query: str, tags: list[str] = None, top_k: int = 5) -> list[dict]:
+    def search_cases(self, query: str, tags: list[str] = None, top_k: int = 5, user: Optional[int] = None) -> list[dict]:
         """搜索案例"""
-        return self.search(query, doc_type="case", tags=tags, top_k=top_k)
+        return self.search(query, doc_type="case", tags=tags, top_k=top_k, user=user)
 
     # ─── 统计 ────────────────────────────────────────────
 

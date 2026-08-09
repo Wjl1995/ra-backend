@@ -81,6 +81,8 @@ class Settings:
     # 对话联网同步预算
     web_sync_budget_seconds: float = float(os.getenv("WEB_SYNC_BUDGET_SECONDS", "15"))
     web_max_fetch_pages: int = int(os.getenv("WEB_MAX_FETCH_PAGES", "3"))
+    # 联网结果整合（合成回答）LLM 采样温度：偏低以获得更确定、忠实的事实整合
+    web_synthesis_temperature: float = float(os.getenv("WEB_SYNTHESIS_TEMPERATURE", "0.3"))
     # 存储
     storage_dir: str = str(_resolve_project_path(os.getenv("STORAGE_DIR", "./data/storage")))
 

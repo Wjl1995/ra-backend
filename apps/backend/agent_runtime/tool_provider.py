@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 from abc import ABC, abstractmethod
 from typing import Any
 
@@ -74,7 +75,6 @@ class LocalToolProvider(ToolProvider):
         arguments: Any = None,
         context: dict[str, Any] | None = None,
     ) -> ToolCallResult:
-        del context
         tool = self.registry.get(tool_name)
         if tool is None:
             available = [item.name for item in self.registry.all_tools()]
@@ -86,6 +86,10 @@ class LocalToolProvider(ToolProvider):
             )
 
         kwargs = self._coerce_arguments(tool.parameters, arguments)
+        # 检索类工具按 user_id 隔离：从调用上下文注入，不污染 LLM 工具 schema
+        user_id = (context or {}).get("user_id")
+        if user_id is not None and _func_accepts_param(tool.func, "user_id"):
+            kwargs["user_id"] = user_id
         try:
             result = tool.run(**kwargs)
         except Exception as exc:  # noqa: BLE001 - 工具执行异常统一在 provider 层捕获
@@ -251,3 +255,12 @@ class MCPToolProvider(ToolProvider):
             "MCPToolProvider synchronous calls cannot run inside an active event loop in Phase 0. "
             "Use the async MCPClientManager directly from async runtime code."
         )
+
+
+def _func_accepts_param(func: Any, name: str) -> bool:
+    """判断 callable 是否接受具名参数（用于安全地注入 user_id 等上下文参数）。"""
+    try:
+        sig = inspect.signature(func)
+    except (TypeError, ValueError):
+        return False
+    return name in sig.parameters

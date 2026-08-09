@@ -98,32 +98,32 @@ def build_server() -> SimpleMCPServer:
         return int(explicit) if explicit not in (None, "") else None
 
     def search_knowledge(arguments: dict, raw_context: dict) -> str:
-        del raw_context
         query = str(arguments.get("query") or "").strip()
         if not query:
             raise ValueError("query is required")
         domain = str(arguments.get("domain") or "").strip() or None
         top_k = int(arguments.get("top_k") or 5)
-        return _format_results(store.search_knowledge(query, domain=domain, top_k=top_k))
+        user_id = require_user_id(parse_request_context(raw_context))
+        return _format_results(store.search_knowledge(query, domain=domain, top_k=top_k, user=user_id))
 
     def lookup_rule(arguments: dict, raw_context: dict) -> str:
-        del raw_context
         query = str(arguments.get("query") or "").strip()
         if not query:
             raise ValueError("query is required")
         domain = str(arguments.get("domain") or "").strip() or None
         top_k = int(arguments.get("top_k") or 5)
-        return _format_results(store.search_rules(query, domain=domain, top_k=top_k), icon="📋")
+        user_id = require_user_id(parse_request_context(raw_context))
+        return _format_results(store.search_rules(query, domain=domain, top_k=top_k, user=user_id), icon="📋")
 
     def retrieve_case(arguments: dict, raw_context: dict) -> str:
-        del raw_context
         query = str(arguments.get("query") or "").strip()
         if not query:
             raise ValueError("query is required")
         raw_tags = str(arguments.get("tags") or "").strip()
         tags = [item.strip() for item in raw_tags.split(",") if item.strip()] if raw_tags else None
         top_k = int(arguments.get("top_k") or 3)
-        return _format_results(store.search_cases(query, tags=tags, top_k=top_k), icon="📌", limit=400)
+        user_id = require_user_id(parse_request_context(raw_context))
+        return _format_results(store.search_cases(query, tags=tags, top_k=top_k, user=user_id), icon="📌", limit=400)
 
     def save_experience(arguments: dict, raw_context: dict) -> str:
         content = str(arguments.get("content") or "").strip()
@@ -134,12 +134,6 @@ def build_server() -> SimpleMCPServer:
         outcome = str(arguments.get("outcome") or "").strip()
         raw_tags = str(arguments.get("tags") or "").strip()
         tags = [item.strip() for item in raw_tags.split(",") if item.strip()]
-        metadata = {
-            "scenario": scenario,
-            "outcome": outcome,
-            "user_id": context.user_id,
-            "session_id": context.session_id,
-        }
         chunk = KnowledgeChunk(
             content=content,
             doc_type="case",
@@ -147,7 +141,12 @@ def build_server() -> SimpleMCPServer:
             tags=tags,
             title=f"经验: {scenario}" if scenario else "经验沉淀",
             title_path=f"经验库 > {scenario}" if scenario else "经验库",
-            metadata={key: value for key, value in metadata.items() if value not in (None, "")},
+            user_id=context.user_id,
+            metadata={
+                "scenario": scenario,
+                "outcome": outcome,
+                "session_id": context.session_id,
+            },
         )
         chunk_id = store.add_chunk(chunk)
         return f"已保存到经验库 (id: {chunk_id})"

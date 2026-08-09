@@ -23,8 +23,9 @@ from apps.backend.models import ChatSession, Message, User
 from apps.backend.mcp import MCPClientManager, build_default_stdio_registry, load_registry_from_json
 from apps.backend.schemas import Citation, MessageSchema, RefSchema, SessionSchema
 from apps.backend.services import search_service
-from apps.backend.services.web_search_service import ingest_web_pages, run_web_search
+from apps.backend.services.web_search_service import ingest_web_synthesis, run_web_search
 from apps.backend.web.need_detector import WebNeedDetector
+from apps.backend.web.synthesizer import synthesize_web_answer
 from knowledge import KnowledgeStore
 from memory import AgentMemory
 from tools import ToolRegistry
@@ -218,6 +219,57 @@ async def build_kimi_answer(
 
     merged_refs = list(local_refs) + web_citations
 
+    # 2.5) 联网结果整合：把检索到的多条结果合成一条结构化、带引用 [n] 的回答，
+    #       不再把原始结果直接抛给用户。合成失败则回退到下方 orchestrator 原链路。
+    if web_citations:
+        web_items = _build_web_synthesis_items(web_outcome, limit=settings.web_search_max_results)
+        local_ctx = _format_local_refs_as_context(local_refs) if local_refs else None
+        web_answer = await run_in_threadpool(
+            synthesize_web_answer,
+            llm_client=_get_client(),
+            model=settings.kimi_model,
+            query=query,
+            items=web_items,
+            local_context=local_ctx,
+            max_tokens=settings.kimi_max_tokens,
+            temperature=settings.web_synthesis_temperature,
+        )
+        if web_answer:
+            web_refs = web_citations[: len(web_items)]
+            response = AgentTurnResponse(
+                answer=web_answer,
+                refs=web_refs,
+                tool_traces=[],
+                resource_refs=[],
+                metadata={"runtime_mode": "web_synthesis", "web_item_count": len(web_items)},
+            )
+            # 知识沉淀（异步，不影响回答延迟）：存「合成回答 + 引用链接」，不存原始网页
+            run_id = web_outcome.run_id
+            if background_tasks is not None:
+                background_tasks.add_task(
+                    ingest_web_synthesis,
+                    user=user,
+                    session_id=session_id,
+                    message_id=mid,
+                    run_id=run_id,
+                    answer=web_answer,
+                    citations=web_citations,
+                    query=query,
+                    knowledge_mode=knowledge_mode,
+                )
+            response.metadata = {
+                **response.metadata,
+                "web_search": {
+                    "need_web": decision.need_web,
+                    "reason": decision.reason,
+                    "run_id": run_id,
+                    "status": web_outcome.status,
+                    "citation_count": len(web_citations),
+                    "provider": web_outcome.provider,
+                },
+            }
+            return response
+
     history = _build_history_messages(db, session_id)
     request = AgentTurnRequest(
         user_id=user.id,
@@ -235,16 +287,18 @@ async def build_kimi_answer(
     if not response.refs:
         response.refs = merged_refs
 
-    # 3) 知识沉淀（异步，不影响回答延迟）
+    # 3) 知识沉淀（异步，不影响回答延迟）：存「回答 + 引用链接」
     run_id = web_outcome.run_id if web_outcome else None
-    if background_tasks is not None and web_outcome is not None and web_outcome.pages:
+    if background_tasks is not None and web_outcome is not None and web_citations:
         background_tasks.add_task(
-            ingest_web_pages,
+            ingest_web_synthesis,
             user=user,
             session_id=session_id,
             message_id=mid,
             run_id=run_id,
-            pages=web_outcome.pages,
+            answer=response.answer,
+            citations=web_citations,
+            query=query,
             knowledge_mode=knowledge_mode,
         )
 
@@ -429,3 +483,38 @@ def _load_runtime_meta(raw_json: str | None) -> dict[str, Any]:
         "resource_refs": payload.get("resource_refs") if isinstance(payload.get("resource_refs"), list) else [],
         "metadata": payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {},
     }
+
+
+def _build_web_synthesis_items(web_outcome: "WebSearchOutcome", limit: int) -> list[dict]:
+    """把检索结果整理为合成器需要的条目（顺序即 [1]..[n] 引用序号）。
+
+    优先用抓到的正文（page.text），否则回退搜索摘要（snippet）；单条文本截断以适配上下文窗口。
+    """
+    pages_by_cid = {p.citation_id: p for p in (web_outcome.pages or [])}
+    items: list[dict] = []
+    for cit in (web_outcome.citations or [])[:limit]:
+        page = pages_by_cid.get(cit.get("citation_id"))
+        text = getattr(page, "text", "") if page is not None else ""
+        if not text:
+            text = cit.get("snippet", "")
+        items.append(
+            {
+                "title": cit.get("title", ""),
+                "url": cit.get("url", ""),
+                "snippet": cit.get("snippet", ""),
+                "text": text,
+            }
+        )
+    return items
+
+
+def _format_local_refs_as_context(local_refs: list[dict]) -> str | None:
+    """把本地文档检索片段格式化为供合成器参考的上下文（可选）。"""
+    if not local_refs:
+        return None
+    parts = []
+    for i, r in enumerate(local_refs, start=1):
+        title = r.get("title") or ""
+        snippet = r.get("snippet") or ""
+        parts.append(f"[文档{i}] {title}\n{snippet}")
+    return "\n\n".join(parts)

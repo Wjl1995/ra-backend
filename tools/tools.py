@@ -320,9 +320,9 @@ class ToolRegistry:
     def inject_knowledge(self, knowledge_store) -> None:
         """注入 KnowledgeStore 实例，使知识库工具可用"""
 
-        def search_knowledge(query: str, domain: str = "", top_k: int = 5) -> str:
+        def search_knowledge(query: str, domain: str = "", top_k: int = 5, user_id=None) -> str:
             results = knowledge_store.search_knowledge(
-                query, domain=domain or None, top_k=top_k
+                query, domain=domain or None, top_k=top_k, user=user_id
             )
             if not results:
                 return "未找到相关知识"
@@ -336,9 +336,9 @@ class ToolRegistry:
                 )
             return "\n\n".join(lines)
 
-        def lookup_rule(query: str, domain: str = "", top_k: int = 5) -> str:
+        def lookup_rule(query: str, domain: str = "", top_k: int = 5, user_id=None) -> str:
             results = knowledge_store.search_rules(
-                query, domain=domain or None, top_k=top_k
+                query, domain=domain or None, top_k=top_k, user=user_id
             )
             if not results:
                 return "未找到相关规则"
@@ -352,9 +352,9 @@ class ToolRegistry:
                 )
             return "\n\n".join(lines)
 
-        def retrieve_case(query: str, tags: str = "", top_k: int = 3) -> str:
+        def retrieve_case(query: str, tags: str = "", top_k: int = 3, user_id=None) -> str:
             tag_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else None
-            results = knowledge_store.search_cases(query, tags=tag_list, top_k=top_k)
+            results = knowledge_store.search_cases(query, tags=tag_list, top_k=top_k, user=user_id)
             if not results:
                 return "未找到相关案例"
             lines = []

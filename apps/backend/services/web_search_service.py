@@ -5,7 +5,8 @@
     WebSearch → Fetch(Top N) → Normalize → Dedup → Organize → Citation
         │
         ├─ 同步阶段：返回 citations 注入 LLM 上下文 + 记录 WebSearchRun / ChatTurnSource
-        └─ 异步阶段（BackgroundTasks）：把引用网页沉淀到个人知识库（save_web_page）
+        └─ 异步阶段（BackgroundTasks）：把「合成回答 + 引用链接」沉淀到个人知识库
+           （ingest_web_synthesis，不再存原始网页全文）
 
 设计要点：
 - 联网判断（WebNeedDetector）在 chat_service 中做，本模块只负责「已经决定联网」后的执行。
@@ -27,12 +28,11 @@ from sqlalchemy.orm import Session
 from apps.backend import models
 from apps.backend.config import settings
 from apps.backend.database import engine
-from apps.backend.services.personal_knowledge import PersonalKnowledgeService, SaveWebPageInput
+from apps.backend.services.personal_knowledge import PersonalKnowledgeService, SaveWebSynthesisInput
 from apps.backend.web.citation import build_citation, domain_of
 from apps.backend.web.dedup import DedupStore, content_hash
 from apps.backend.web.fetch_http import get_fetch_adapter
 from apps.backend.web.normalize import normalize_html
-from apps.backend.web.organizer import KnowledgeOrganizer
 from apps.backend.web.search_provider import get_search_provider
 
 
@@ -125,8 +125,9 @@ async def run_web_search(
                     ],
                     ensure_ascii=False,
                 )
-                # 按相关度取前 N 抓正文
-                top = sorted(results, key=lambda r: r.score, reverse=True)[:max_fetch_pages]
+                # 按相关度排序，取前 max_results 条全部进入引用（满足「整合 N 条结果」需求）；
+                # 其中仅前 max_fetch_pages 条抓正文，其余用搜索摘要兜底，控制抓取延迟
+                top = sorted(results, key=lambda r: r.score, reverse=True)[:max_results]
                 adapter = get_fetch_adapter()
                 dedup = DedupStore()
 
@@ -139,36 +140,38 @@ async def run_web_search(
                     src_title = r.title or r.url
                     src_domain = domain_of(r.url)
 
-                    try:
-                        res = await adapter.fetch(r.url)
-                        if not res.error:
-                            try:
-                                html = res.content.decode("utf-8", errors="replace")
-                            except Exception:
-                                html = ""
-                            if html:
-                                np = normalize_html(html, base_url=res.final_url)
-                                if np.is_quality_pass():
-                                    final_url = res.final_url or r.url
-                                    dup = dedup.check_and_add(url=final_url, text=np.text)
-                                    if not dup.is_duplicate:
-                                        page = FetchedPage(
-                                            citation_id=_cid(final_url),
-                                            title=np.title or r.title,
-                                            url=r.url,
-                                            final_url=final_url,
-                                            source_domain=domain_of(final_url),
-                                            markdown=np.markdown,
-                                            text=np.text,
-                                            content_hash=content_hash(np.text),
-                                            language=np.language,
-                                            quality_score=np.quality_score,
-                                            snippet=np.text[:2000],
-                                            fetched_at=fetched_at,
-                                        )
-                                        outcome.pages.append(page)
-                    except Exception:  # noqa: BLE001 - 单条失败不影响其余
-                        page = None
+                    # 仅对前 max_fetch_pages 条抓正文，其余直接走搜索摘要兜底（控制延迟）
+                    if rank <= max_fetch_pages:
+                        try:
+                            res = await adapter.fetch(r.url)
+                            if not res.error:
+                                try:
+                                    html = res.content.decode("utf-8", errors="replace")
+                                except Exception:
+                                    html = ""
+                                if html:
+                                    np = normalize_html(html, base_url=res.final_url)
+                                    if np.is_quality_pass():
+                                        final_url = res.final_url or r.url
+                                        dup = dedup.check_and_add(url=final_url, text=np.text)
+                                        if not dup.is_duplicate:
+                                            page = FetchedPage(
+                                                citation_id=_cid(final_url),
+                                                title=np.title or r.title,
+                                                url=r.url,
+                                                final_url=final_url,
+                                                source_domain=domain_of(final_url),
+                                                markdown=np.markdown,
+                                                text=np.text,
+                                                content_hash=content_hash(np.text),
+                                                language=np.language,
+                                                quality_score=np.quality_score,
+                                                snippet=np.text[:2000],
+                                                fetched_at=fetched_at,
+                                            )
+                                            outcome.pages.append(page)
+                        except Exception:  # noqa: BLE001 - 单条失败不影响其余
+                            page = None
 
                     if page is not None:
                         # 完整正文路径：用抓取并清洗后的内容
@@ -256,58 +259,52 @@ def _cid(url: str) -> str:
     return citation_id_for(url)
 
 
-async def ingest_web_pages(
+async def ingest_web_synthesis(
     *,
     user: "models.User",
     session_id: int,
     message_id: int,
     run_id: int | None,
-    pages: list[FetchedPage],
+    answer: str,
+    citations: list[dict],
+    query: str,
     knowledge_mode: str = "auto",
 ) -> dict[str, int]:
-    """把引用网页沉淀到个人知识库（在 BackgroundTasks 中调用，同步函数）。
+    """把「联网合成回答 + 引用链接」沉淀到个人知识库（BackgroundTasks 中调用）。
 
-    知识沉淀始终异步，不影响回答延迟。knowledge_mode:
+    折中方案：不存原始网页全文，只存 LLM 整合后的回答 + 每条引用的
+    标题/链接/摘要片段，既减少存储又保留一手可追溯性。
+
+    knowledge_mode:
       - off / ask：不自动沉淀（ask 由前端后续触发保存）
-      - auto / always：沉淀实际抓到的质量合格网页
+      - auto / always：沉淀合成结果
     """
     if knowledge_mode in ("off", "ask"):
-        return {"saved": 0, "skipped": len(pages)}
-    if not pages:
+        return {"saved": 0, "skipped": len(citations)}
+    if not answer or not citations:
         return {"saved": 0, "skipped": 0}
 
     svc = PersonalKnowledgeService()
-    organizer = KnowledgeOrganizer()
-    saved = 0
-    for page in pages:
-        try:
-            # 异步阶段才调用 LLM 整理，避免占用对话同步预算
-            card = await organizer.organize(page.markdown, source_url=page.final_url)
-            doc = svc.save_web_page(
-                SaveWebPageInput(
-                    user_id=user.id,
-                    source_url=page.final_url,
-                    title=page.title,
-                    markdown=page.markdown,
-                    text=page.text,
-                    content_hash=page.content_hash,
-                    language=page.language,
-                    quality_score=page.quality_score,
-                    card=card,
-                )
+    try:
+        doc = svc.save_web_synthesis(
+            SaveWebSynthesisInput(
+                user_id=user.id,
+                query=query,
+                answer=answer,
+                citations=citations,
+                idempotency_key=str(message_id),
             )
+        )
+        if doc is not None:
             # 把 ChatTurnSource 关联到保存出的文档版本
             with Session(engine) as db:
                 db.execute(
                     update(models.ChatTurnSource)
-                    .where(
-                        models.ChatTurnSource.message_id == message_id,
-                        models.ChatTurnSource.citation_id == page.citation_id,
-                    )
+                    .where(models.ChatTurnSource.message_id == message_id)
                     .values(document_version_id=doc.current_version_id)
                 )
                 db.commit()
-            saved += 1
-        except Exception:  # noqa: BLE001 - 单条失败不阻塞其余
-            continue
-    return {"saved": saved, "skipped": len(pages) - saved}
+            return {"saved": 1, "skipped": 0}
+    except Exception:  # noqa: BLE001 - 单条失败不阻塞回答链路
+        pass
+    return {"saved": 0, "skipped": len(citations)}
