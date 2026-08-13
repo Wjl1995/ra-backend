@@ -1,12 +1,17 @@
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass
 
+import numpy as np
 from sqlalchemy.orm import Session
 
 from apps.backend.models import Document, DocumentChunk, User
 from apps.backend.schemas import SearchResultSchema
+from apps.backend.services.embedding_service import get_embedding_service
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -119,12 +124,30 @@ def retrieve_relevant_chunks(
             )
         return matches
 
+    # 每条候选的检索文本：自带标题/摘要上下文（等价于"块头带标题路径"）
+    candidate_texts = [
+        f"{document.title}\n{document.summary}\n{chunk.title}\n{chunk.content}"
+        for chunk, document in rows
+    ]
+
+    # 关键词（token overlap）打分 —— 兜底，擅长精确短语 / 专有名词
     query_tokens = _tokenize(query_text)
+    kw_scores = [
+        _score_text(query_text, query_tokens, candidate_texts[i])
+        for i, (_, _) in enumerate(rows)
+    ]
+
+    # 向量召回 —— 主力，语义 / 同义 / 跨表述命中
+    vec_scores = _vector_scores(query_text, candidate_texts)
+
+    # 融合：向量为主（0.7）+ 关键词兜底（0.3），均归一化到 0~1
+    max_kw = max((s for s in kw_scores if s > 0), default=1.0) or 1.0
     scored = []
-    for chunk, document in rows:
-        text = f"{document.title}\n{document.summary}\n{chunk.title}\n{chunk.content}"
-        score = _score_text(query_text, query_tokens, text)
-        if score <= 0:
+    for i, (chunk, document) in enumerate(rows):
+        kw_norm = kw_scores[i] / max_kw if kw_scores[i] > 0 else 0.0
+        vec_norm = vec_scores[i]
+        final = 0.7 * vec_norm + 0.3 * kw_norm
+        if final <= 0 and kw_scores[i] <= 0:
             continue
         scored.append(
             ChunkMatch(
@@ -133,12 +156,40 @@ def retrieve_relevant_chunks(
                 document_title=document.title,
                 chunk_title=chunk.title,
                 snippet=chunk.content[:160],
-                score=score,
+                score=final,
             )
         )
 
     scored.sort(key=lambda item: item.score, reverse=True)
     return scored[:top_k]
+
+
+def _vector_scores(query_text: str, texts: list[str]) -> list[float]:
+    """对 query 与候选文本批量向量化并算余弦相似度（向量已 L2 归一化 → 点积）。
+
+    返回与 texts 等长、裁剪到 [0, 1] 的分值。向量后端不可用时返回全 0（退化为纯关键词）。
+    """
+    try:
+        svc = get_embedding_service()
+        all_vecs = svc.embed([query_text] + texts)
+        q = np.array(all_vecs[0], dtype=np.float32)
+        qn = np.linalg.norm(q)
+        if qn < 1e-9:
+            return [0.0] * len(texts)
+        q = q / qn
+        out = []
+        for v in all_vecs[1:]:
+            arr = np.array(v, dtype=np.float32)
+            an = np.linalg.norm(arr)
+            if an < 1e-9:
+                out.append(0.0)
+                continue
+            cos = float(np.dot(q, arr / an))
+            out.append(max(cos, 0.0))
+        return out
+    except Exception as e:
+        logger.warning("vector search failed, fallback to keyword only: %s", e)
+        return [0.0] * len(texts)
 
 
 def _score_text(query_text: str, query_tokens: set[str], text: str) -> float:

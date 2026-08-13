@@ -59,3 +59,8 @@ Thumbs.db
 knowledge/raw/
 
 test/
+
+# Local ONNX embedding model (downloaded artifact, ~135MB binary).
+# Not committed to git. The prod container already deploys it via docker cp.
+# To (re)fetch locally for dev, run: scripts/download_embedding_model.sh
+models/

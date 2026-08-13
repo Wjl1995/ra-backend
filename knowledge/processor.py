@@ -109,13 +109,44 @@ def parse_json_doc(
 
 # ─── 文本分块 ──────────────────────────────────────────────
 
+def _protected_ranges(text: str) -> list[tuple[int, int]]:
+    """返回不应被字数切断的结构区间（代码围栏、Markdown 表格块）。"""
+    ranges: list[tuple[int, int]] = []
+    # 代码围栏 ```...``` 或 ~~~...~~~
+    for m in re.finditer(r"```.*?```|~~~.*?~~~", text, re.DOTALL):
+        ranges.append((m.start(), m.end()))
+    # 连续表格行（以 | 开头，至少表头 + 分隔两行）
+    lines = text.split("\n")
+    i = 0
+    while i < len(lines):
+        stripped = lines[i].lstrip()
+        # 分隔行形如 |---|---|，去掉 | 后只剩 -/空格，需排除
+        core = stripped.replace("|", "").replace(":", "").strip()
+        if stripped.startswith("|") and set(core) <= {"-", " "}:
+            i += 1
+            continue
+        if stripped.startswith("|"):
+            j = i
+            while j < len(lines) and lines[j].lstrip().startswith("|"):
+                j += 1
+            if j - i >= 2:
+                prefix = "\n".join(lines[:i])
+                start_idx = len(prefix) + 1 if i > 0 else 0
+                end_idx = len("\n".join(lines[:j]))
+                ranges.append((start_idx, end_idx))
+            i = j
+        else:
+            i += 1
+    return ranges
+
+
 def chunk_text(
     text: str,
     chunk_size: int = 500,
     overlap: int = 80,
 ) -> list[str]:
     """
-    将长文本按字数分块（中文场景）
+    将长文本按字数分块（中文场景），保护代码块与表格不被硬切断。
 
     Args:
         text: 输入文本
@@ -125,20 +156,30 @@ def chunk_text(
     if len(text) <= chunk_size:
         return [text]
 
+    prot = _protected_ranges(text)
+
     chunks = []
     start = 0
     while start < len(text):
         end = start + chunk_size
-        chunk = text[start:end]
-        # 尝试在句号/换行处断开
         if end < len(text):
-            for sep in ["\n\n", "\n", "。", "！", "？", "；"]:
-                last_sep = chunk.rfind(sep)
-                if last_sep > chunk_size * 0.5:
-                    chunk = chunk[:last_sep + len(sep)]
-                    end = start + last_sep + len(sep)
+            # 若候选断点落在受保护区域内，推到该区域结束之后，避免切断代码/表格
+            pushed = False
+            for s, e in prot:
+                if s < end < e:
+                    end = e
+                    pushed = True
                     break
-        chunks.append(chunk.strip())
+            if not pushed:
+                chunk = text[start:end]
+                for sep in ["\n\n", "\n", "。", "！", "？", "；"]:
+                    last_sep = chunk.rfind(sep)
+                    if last_sep > chunk_size * 0.5:
+                        end = start + last_sep + len(sep)
+                        break
+        chunk = text[start:end].strip()
+        if chunk:
+            chunks.append(chunk)
         start = end - overlap
         if start >= len(text):
             break
