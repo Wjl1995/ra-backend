@@ -87,6 +87,8 @@ async def save_uploaded_document(
             )
         document.summary = _build_summary(chunks)
         document.status = "ready"
+        # 轻量级结构导航：解析后同步构建结构树 + 概念图谱
+        _build_structure(db, document)
     except Exception as exc:  # noqa: BLE001
         document.status = "failed"
         document.summary = f"Parsing failed: {exc}"
@@ -149,6 +151,20 @@ def _parse_document_chunks(file_path: str, title: str, domain: str) -> list[dict
     if not raw_text:
         return []
     return [{"title": title[:255], "content": raw_text[: settings.retrieval_chunk_size * 2]}]
+
+
+def _build_structure(db: Session, document: Document) -> None:
+    """构建并写回文档的结构树 / 概念图谱（容错：失败仅标记状态，不影响上传）。"""
+    try:
+        from apps.backend.services import structure_service
+
+        db.flush()
+        data = structure_service.build_structure(document, document.chunks)
+        document.structure_json = json.dumps(data, ensure_ascii=False)
+        document.structure_status = "ready"
+    except Exception as exc:  # noqa: BLE001
+        document.structure_status = "failed"
+        document.structure_json = json.dumps({"error": str(exc)}, ensure_ascii=False)
 
 
 def _build_summary(chunks: list[dict[str, str]]) -> str:

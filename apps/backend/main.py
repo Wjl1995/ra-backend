@@ -9,6 +9,7 @@ from apps.backend.api.chat import router as chat_router
 from apps.backend.api.document import router as document_router
 from apps.backend.api.me import router as me_router
 from apps.backend.api.search import router as search_router
+from apps.backend.api.structure import router as structure_router
 from apps.backend.api.suggestions import router as suggestions_router
 from apps.backend.api.web_search import router as web_search_router
 from apps.backend.config import settings
@@ -33,6 +34,7 @@ def create_app() -> FastAPI:
     app.include_router(chat_router, prefix=api_prefix)
     app.include_router(document_router, prefix=api_prefix)
     app.include_router(search_router, prefix=api_prefix)
+    app.include_router(structure_router, prefix=api_prefix)
     app.include_router(suggestions_router, prefix=api_prefix)
     app.include_router(web_search_router, prefix=api_prefix)
     register_admin_routes(app)
@@ -55,6 +57,7 @@ def ensure_runtime_schema() -> None:
 
     if "documents" in table_names:
         _ensure_documents_user_id(inspector)
+        _ensure_documents_structure(inspector)
 
     if "messages" in table_names:
         _ensure_messages_runtime_meta(inspector)
@@ -84,6 +87,19 @@ def _ensure_documents_user_id(inspector) -> None:
                 """
             )
         )
+
+
+def _ensure_documents_structure(inspector) -> None:
+    columns = {column["name"] for column in inspector.get_columns("documents")}
+    with engine.begin() as connection:
+        if "structure_status" not in columns:
+            connection.execute(
+                text("ALTER TABLE documents ADD COLUMN structure_status VARCHAR(16) DEFAULT 'pending'")
+            )
+        if "structure_json" not in columns:
+            connection.execute(
+                text("ALTER TABLE documents ADD COLUMN structure_json TEXT DEFAULT '{}'")
+            )
 
 
 def _ensure_messages_runtime_meta(inspector) -> None:

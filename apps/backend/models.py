@@ -102,6 +102,12 @@ class Document(Base):
     quality_status: Mapped[str] = mapped_column(String(32), default="pending")  # pending | accepted | review_required | rejected
     last_fetched_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
+    # ── 轻量级结构导航（§结构导航集成）──
+    structure_status: Mapped[str] = mapped_column(
+        String(16), default="pending"
+    )  # pending | ready | failed
+    structure_json: Mapped[str] = mapped_column(Text, default="{}")
+
     user: Mapped[User | None] = relationship()
     chunks: Mapped[list["DocumentChunk"]] = relationship(back_populates="document")
     versions: Mapped[list["DocumentVersion"]] = relationship(
